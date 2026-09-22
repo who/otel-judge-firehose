@@ -139,7 +139,12 @@ describe("listScenarios", () => {
   it("lists scenarios with stable ids and descriptions", () => {
     const listed = listScenarios();
 
-    expect(listed.map((entry) => entry.id)).toEqual(["healthy", "post_deploy_burn"]);
+    expect(listed.map((entry) => entry.id)).toEqual([
+      "healthy",
+      "post_deploy_burn",
+      "dependency_timeouts",
+      "noise_storm",
+    ]);
     for (const entry of listed) {
       expect(entry.description.length).toBeGreaterThan(20);
       expect(SCENARIOS[entry.id]?.description).toBe(entry.description);

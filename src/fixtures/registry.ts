@@ -16,7 +16,9 @@
 import { mintPacketId } from "../packet/id";
 import type { Packet, PacketWindow } from "../packet/schema";
 import { validatePackets } from "../packet/validate";
+import { buildDependencyTimeouts } from "./dependencyTimeouts";
 import { buildHealthy } from "./healthy";
+import { buildNoiseStorm } from "./noiseStorm";
 import { buildPostDeployBurn } from "./postDeployBurn";
 import { createSeededRng, freshSeed, type RandomSource } from "./rng";
 
@@ -100,6 +102,18 @@ export const SCENARIOS: Readonly<Record<string, ScenarioDefinition>> = {
     description:
       "Regression minutes after a release: error rate 10-30x baseline, p95 latency 2-4x baseline, burn rate above 4, populated recent deploy.",
     build: buildPostDeployBurn,
+  },
+  dependency_timeouts: {
+    id: "dependency_timeouts",
+    description:
+      "Upstream dependency timing out while the service is healthy: p95 latency 4-8x baseline near a 3s timeout ceiling, error rate 5-15%, burn rate 1-3, no recent deploy, upstream client span leading.",
+    build: buildDependencyTimeouts,
+  },
+  noise_storm: {
+    id: "noise_storm",
+    description:
+      "Alert noise, not an incident: error rate at or below baseline, latency within 10% of baseline, burn rate below 0.3, no recent deploy, many low-count spans and a long list of flapping labels.",
+    build: buildNoiseStorm,
   },
 };
 
