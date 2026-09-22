@@ -180,15 +180,16 @@ describe("all scenarios validate", () => {
 });
 
 describe("four scenarios", () => {
-  it("the scenario listing reports exactly four scenarios in registration order", () => {
+  it("the scenario listing reports the four fixtures first, in registration order, then chaos", () => {
     const listed = listScenarios();
 
-    expect(listed).toHaveLength(4);
-    expect(listed.map((entry) => entry.id)).toEqual([...ALL_SCENARIO_IDS]);
+    expect(listed).toHaveLength(5);
+    expect(listed.slice(0, 4).map((entry) => entry.id)).toEqual([...ALL_SCENARIO_IDS]);
+    expect(listed.at(-1)?.id).toBe("chaos");
     for (const entry of listed) {
       expect(entry.description.length).toBeGreaterThan(20);
       expect(SCENARIOS[entry.id]?.description).toBe(entry.description);
     }
-    expect(Object.keys(SCENARIOS)).toHaveLength(4);
+    expect(Object.keys(SCENARIOS)).toHaveLength(5);
   });
 });

@@ -144,6 +144,7 @@ describe("listScenarios", () => {
       "post_deploy_burn",
       "dependency_timeouts",
       "noise_storm",
+      "chaos",
     ]);
     for (const entry of listed) {
       expect(entry.description.length).toBeGreaterThan(20);

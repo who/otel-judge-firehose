@@ -9,10 +9,11 @@
  *
  * Scenario identifiers are a contract with the demo Emit control and are
  * fixed: healthy, post_deploy_burn, dependency_timeouts, noise_storm, and
- * later chaos. Adding a scenario means adding an entry to `SCENARIOS`; the
+ * chaos. Adding a scenario means adding an entry to `SCENARIOS`; the
  * interface does not change.
  */
 
+import { buildChaosPacket } from "../chaos/template";
 import { mintPacketId } from "../packet/id";
 import type { Packet, PacketWindow } from "../packet/schema";
 import { validatePackets } from "../packet/validate";
@@ -114,6 +115,12 @@ export const SCENARIOS: Readonly<Record<string, ScenarioDefinition>> = {
     description:
       "Alert noise, not an incident: error rate at or below baseline, latency within 10% of baseline, burn rate below 0.3, no recent deploy, many low-count spans and a long list of flapping labels.",
     build: buildNoiseStorm,
+  },
+  chaos: {
+    id: "chaos",
+    description:
+      "Randomized: seeded template draws the service, environment, signal profile, span mix, and alert labels afresh per packet; about one in four carries a recent deploy. Reproducible with a seed.",
+    build: buildChaosPacket,
   },
 };
 
