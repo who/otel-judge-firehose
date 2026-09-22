@@ -1,0 +1,10 @@
+{
+  // Cloudflare Worker configuration for the packet firehose producer.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "otel-judge-firehose",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "observability": {
+    "enabled": true
+  }
+}
