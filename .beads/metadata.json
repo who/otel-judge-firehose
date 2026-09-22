@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "otel_judge_firehose",
+  "project_id": "205ab5fe-7915-4c54-a861-6b5bb384a24d"
+}
