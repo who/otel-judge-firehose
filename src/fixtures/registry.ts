@@ -23,6 +23,13 @@ import { buildNoiseStorm } from "./noiseStorm";
 import { buildPostDeployBurn } from "./postDeployBurn";
 import { createSeededRng, freshSeed, type RandomSource } from "./rng";
 
+/**
+ * Identifier of the randomized scenario, the one the emit handler routes
+ * through Workers AI when `llm` is set. Lives here rather than in the chaos
+ * module because the registry owns every scenario id.
+ */
+export const CHAOS_SCENARIO_ID = "chaos";
+
 /** Length of every fixture observation window. */
 export const WINDOW_MS = 5 * 60 * 1000;
 
@@ -116,10 +123,10 @@ export const SCENARIOS: Readonly<Record<string, ScenarioDefinition>> = {
       "Alert noise, not an incident: error rate at or below baseline, latency within 10% of baseline, burn rate below 0.3, no recent deploy, many low-count spans and a long list of flapping labels.",
     build: buildNoiseStorm,
   },
-  chaos: {
-    id: "chaos",
+  [CHAOS_SCENARIO_ID]: {
+    id: CHAOS_SCENARIO_ID,
     description:
-      "Randomized: seeded template draws the service, environment, signal profile, span mix, and alert labels afresh per packet; about one in four carries a recent deploy. Reproducible with a seed.",
+      "Randomized: seeded template draws the service, environment, signal profile, span mix, and alert labels afresh per packet; about one in four carries a recent deploy. Reproducible with a seed. With llm set, Workers AI writes the descriptive fields and the template stands in whenever the model output is invalid.",
     build: buildChaosPacket,
   },
 };

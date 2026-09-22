@@ -7,12 +7,16 @@
  * nothing, which lets the demo prove its wiring without touching the Judge.
  * Optional `intervalMs` and `burst` fields pace the run through `pacedEmit`
  * so a demo board fills in visibly, bounded by a fixed wall-clock ceiling.
+ * An optional `llm` flag sends the chaos scenario's first burst through
+ * Workers AI via `buildLlmChaosPackets`, which falls back to the template
+ * packet, never to an invalid one.
  */
 
 import { z } from "zod";
 
+import { buildLlmChaosPackets } from "../chaos/llm";
 import { ConfigError, resolveConfig, type FirehoseConfig, type FirehoseEnv } from "../config";
-import { UnknownScenarioError, buildScenarioPackets } from "../fixtures/registry";
+import { CHAOS_SCENARIO_ID, UnknownScenarioError, buildScenarioPackets } from "../fixtures/registry";
 import type { Packet } from "../packet/schema";
 import { PacketValidationError, formatIssuePath, validatePackets } from "../packet/validate";
 import { postPackets, type JudgeClientDeps, type JudgePostResult } from "./judgeClient";
@@ -38,6 +42,12 @@ export const EmitRequestSchema = z.object({
   intervalMs: z.number().int().min(0).max(MAX_INTERVAL_MS).optional(),
   /** Packets per burst; omitted means the whole count in one burst. */
   burst: z.number().int().min(1).max(MAX_BURST).optional(),
+  /**
+   * When true and the scenario is `chaos`, Workers AI writes the descriptive
+   * fields of the first burst. Omitted means false: the template path, and no
+   * model call. Ignored for every other scenario.
+   */
+  llm: z.boolean().optional(),
 });
 
 export type EmitRequest = z.infer<typeof EmitRequestSchema>;
@@ -61,6 +71,11 @@ export interface EmitSummary {
   readonly truncated: boolean;
   /** Milliseconds from the first burst to the last result; zero for a dry run. */
   readonly elapsedMs: number;
+  /**
+   * Present only when `llm` was set and at least one packet fell back to its
+   * template, naming the first reason seen. Never carries model output.
+   */
+  readonly fallbackReason?: string;
 }
 
 /**
@@ -145,12 +160,22 @@ export async function handleEmit(
       400,
     );
   }
-  const { scenario, count, seed, dryRun, intervalMs, burst } = parsed.data;
+  const { scenario, count, seed, dryRun, intervalMs, burst, llm } = parsed.data;
   const { buildPackets = buildScenarioPackets, now, ...clientDeps } = deps;
+  const pacing = resolvePacing({ intervalMs, burst, count });
 
   let packets: Packet[];
+  let fallbackReason: string | undefined;
   try {
-    packets = validatePackets(buildPackets(scenario, count, seed === undefined ? {} : { seed }));
+    let candidates: readonly unknown[] = buildPackets(scenario, count, seed === undefined ? {} : { seed });
+    if (llm === true && scenario === CHAOS_SCENARIO_ID) {
+      // Model latency stays out of the paced part of the run: only the first
+      // burst is model-written, and every result is validated again below.
+      const rewritten = await buildLlmChaosPackets(validatePackets(candidates), pacing.burst, env.AI);
+      candidates = rewritten.packets;
+      fallbackReason = rewritten.fallbackReason;
+    }
+    packets = validatePackets(candidates);
   } catch (error) {
     if (error instanceof UnknownScenarioError) {
       return jsonResponse(
@@ -172,7 +197,7 @@ export async function handleEmit(
     ? { results: [], truncated: false, elapsedMs: 0 }
     : await pacedEmit(
         packets,
-        resolvePacing({ intervalMs, burst, count }),
+        pacing,
         (slice) => postPackets(config, slice, clientDeps),
         pacingDeps(clientDeps.sleep, now),
       );
@@ -190,6 +215,7 @@ export async function handleEmit(
     results,
     truncated,
     elapsedMs,
+    ...(fallbackReason === undefined ? {} : { fallbackReason }),
   };
   return jsonResponse(summary, 200);
 }

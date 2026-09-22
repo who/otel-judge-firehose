@@ -157,6 +157,7 @@ describe("readme", () => {
       "results",
       "truncated",
       "elapsedMs",
+      "fallbackReason",
     ];
     expect(missing(summaryFields, readme)).toEqual([]);
     expect(missing(["packetId", "accepted", "status", "attempts", "error"], readme)).toEqual([]);

@@ -11,7 +11,19 @@ const OTHER_ORIGIN = "https://evil.example";
 const JUDGE_URL = "https://judge.example/ingest/v1";
 const TOKEN = "super-secret-ingest-token";
 
-const ENV: Env = { JUDGE_FIREHOSE_URL: JUDGE_URL, JUDGE_INGEST_TOKEN: TOKEN };
+/** Every model call made through the shared environment; the default path must never add one. */
+const modelCalls: unknown[] = [];
+
+const ENV: Env = {
+  JUDGE_FIREHOSE_URL: JUDGE_URL,
+  JUDGE_INGEST_TOKEN: TOKEN,
+  AI: {
+    run: async (_model, inputs) => {
+      modelCalls.push(inputs);
+      return { response: "{}" };
+    },
+  },
+};
 
 /** Loosely typed JSON body so assertions can reach into any field. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +87,9 @@ describe("EmitRequestSchema", () => {
   it("leaves the pacing fields absent unless supplied and bounds them", () => {
     expect(EmitRequestSchema.parse({ scenario: "healthy" })).not.toHaveProperty("intervalMs");
     expect(EmitRequestSchema.parse({ scenario: "healthy" })).not.toHaveProperty("burst");
+    expect(EmitRequestSchema.parse({ scenario: "healthy" })).not.toHaveProperty("llm");
+    expect(EmitRequestSchema.parse({ scenario: "chaos", llm: true })).toMatchObject({ llm: true });
+    expect(EmitRequestSchema.safeParse({ scenario: "chaos", llm: "true" }).success).toBe(false);
     expect(EmitRequestSchema.parse({ scenario: "healthy", intervalMs: 250, burst: 3 })).toMatchObject({
       intervalMs: 250,
       burst: 3,
@@ -116,6 +131,10 @@ describe("POST /emit", () => {
     });
     expect(postedIds).toEqual(body.packetIds);
     expect(new Set(postedIds).size).toBe(3);
+
+    // Without `llm` the request never reaches the model and reports no fallback.
+    expect(modelCalls).toHaveLength(0);
+    expect(body).not.toHaveProperty("fallbackReason");
   });
 
   it("forwards packets with the default count of one", async () => {

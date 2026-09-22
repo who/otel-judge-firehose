@@ -12,8 +12,8 @@
  * Roughly one packet in four carries a populated `recent_deploy`; the rest
  * set it to `null`, giving the Judge a mixed signal on deploy relatedness.
  *
- * The Workers AI chaos path lands separately and reuses this module as its
- * fallback; nothing here touches an AI binding or a new route.
+ * The Workers AI chaos path in `./llm.ts` reuses this module as its base and
+ * its fallback; nothing here touches an AI binding or a new route.
  */
 
 import { PACKET_ENVS, type Packet, type PacketEnv, type RecentDeploy, type TopSpan } from "../packet/schema";

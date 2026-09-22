@@ -7,6 +7,12 @@
   "observability": {
     "enabled": true
   },
+  // Workers AI binding for the chaos scenario's `llm` mode. The model runs
+  // inside this Worker so no inference credential ever reaches the demo.
+  // Optional at runtime: without it, `llm` falls back to the template path.
+  "ai": {
+    "binding": "AI"
+  },
   // Non-secret configuration. See `src/config.ts` (`resolveConfig`) for how
   // these are validated, and `.dev.vars.example` for local overrides.
   //

@@ -16,6 +16,9 @@ deploy, and call the producer.
 - The deterministic fixture library: four canned scenarios plus a seeded
   chaos randomizer, all validated against the packet schema before they
   leave the generator.
+- The Workers AI chaos path: with `llm` set, a model writes the descriptive
+  fields of a chaos packet inside this Worker, and the template packet
+  stands in whenever the model is unavailable or its output is invalid.
 - The emit API the demo calls: `POST /emit` with a scenario and a count,
   which forwards packets to the Judge firehose.
 - Rate and burst pacing for demo runs.
@@ -35,9 +38,9 @@ deploy, and call the producer.
 
 ## Environment variables
 
-The Worker reads exactly three bindings. `resolveConfig()` in
-`src/config.ts` validates them, and the health probe reports whether the
-result is usable.
+The Worker reads three variables and one optional binding. `resolveConfig()`
+in `src/config.ts` validates the variables, and the health probe reports
+whether the result is usable.
 
 | Variable | Kind | Required | Meaning |
 |---|---|---|---|
@@ -56,6 +59,15 @@ The other two variables are plain configuration and live in the `vars`
 block of `wrangler.jsonc`. The committed values there are placeholders;
 override them per deployment.
 
+The `ai` block of `wrangler.jsonc` declares a Workers AI binding named `AI`.
+It is not a variable and carries no key: Workers AI is billed to the account
+that deploys this Worker, and inference runs inside the Worker, so the demo
+never holds an inference credential. The binding is only touched by the
+`chaos` scenario when an emit request sets `llm`, and it is optional at
+runtime. Without it, `llm` requests take the template path and the summary
+reports `fallbackReason` as `ai_binding_missing`. The test suite stubs the
+binding and never calls a model.
+
 The demo holds only the public URL of this Worker. It never sees
 `JUDGE_FIREHOSE_URL` or the ingest token, and this producer never places a
 Judge secret in a CORS header or a response.
@@ -72,6 +84,10 @@ npm run dev                          # wrangler dev on http://localhost:8787
 variables go, the token included. Point `JUDGE_FIREHOSE_URL` at a locally
 running Judge Worker over `http://localhost:8787` or at a staging ingress
 over HTTPS.
+
+Under `wrangler dev` the `AI` binding runs inference remotely against the
+logged-in account, so an `llm` request from a local Worker still bills that
+account. Leave `llm` unset locally unless that is what you want to test.
 
 Checks:
 
@@ -174,10 +190,16 @@ to the Judge firehose as its own HTTP request. The body is parsed by
 | `dryRun` | boolean | `false` | Generate and validate but post nothing. Lets the demo prove its wiring without touching the Judge. |
 | `intervalMs` | integer 0 to 2000 | none | Gap between bursts in milliseconds. Omitted means no pacing. |
 | `burst` | integer 1 to 10 | none | Packets per burst. Omitted means the whole count in one burst. |
+| `llm` | boolean | `false` | For the `chaos` scenario only: Workers AI writes the service, environment, span names, alert labels, and `log_snippets` of the first burst, at most ten packets. Every number, the window, and the identifier stay computed here, and a packet whose merged result fails validation is replaced by its template packet. Ignored for the fixture scenarios. |
 
-An `llm` field is not yet accepted. The `chaos` scenario is currently the
-seeded template randomizer; a Workers AI path is planned behind the same
-route and will fall back to the template when the model output is invalid.
+When `llm` is set, the model is called once per packet of the first burst
+and retried once. Any failure, a rejected or slow call, prose instead of
+JSON, a field the model schema rejects, or a merged packet the contract
+rejects, is silent: the template packet is posted instead and the summary
+names the first reason in `fallbackReason`. Nothing invalid is ever posted,
+and the model's text never appears in a response. With a `seed`, the
+template packets underneath are still reproducible; the model-written
+fields are not.
 
 Request body, with every field present:
 
@@ -234,6 +256,12 @@ Response, HTTP `200`:
 - `elapsedMs` is the time from the first burst to the last result.
 - A dry run returns `accepted` as `0`, an empty `results`, and `elapsedMs`
   as `0`.
+- `fallbackReason` is present only when `llm` was set and at least one
+  packet fell back to its template packet. It names the first reason seen:
+  `ai_binding_missing`, `model_output_invalid`, `model_call_failed: ...`
+  with the error's own message, or `merged_packet_invalid: ...` with the
+  field paths that failed. It is absent when every model-written packet was
+  accepted, and always absent without `llm`.
 
 Error responses:
 
@@ -262,6 +290,9 @@ The identifiers are a contract with the demo Emit control and are fixed.
 - `chaos`: seeded template randomizer that draws the service, environment,
   signal profile, span mix, and alert labels afresh per packet, with about
   one packet in four carrying a recent deploy. Reproducible with a `seed`.
+  With `llm` set, Workers AI writes the descriptive fields on top of the
+  template packet and the template stands in whenever the model output is
+  invalid.
 
 Descriptions are served verbatim by `GET /scenarios`, which is the source of
 truth for the Emit control's picker.
@@ -275,8 +306,8 @@ otel-judge-demo (Emit control)  --POST /emit-->  otel-judge-firehose  --one POST
 1. The demo is configured with the public URL of this Worker and nothing
    else. It reads `GET /scenarios` to populate the scenario picker.
 2. A click on Emit sends `POST /emit` with the chosen `scenario`, `count`,
-   and optional `intervalMs` and `burst`. The demo's origin must be in
-   `DEMO_ORIGIN_ALLOWLIST` or the browser will block the call.
+   and optional `intervalMs`, `burst`, and `llm`. The demo's origin must be
+   in `DEMO_ORIGIN_ALLOWLIST` or the browser will block the call.
 3. This Worker generates and validates the packets, then posts each one to
    `JUDGE_FIREHOSE_URL`, attaching the ingest token when one is configured.
 4. The Judge dedupes on `packet_id` and routes the packet to the Agent, and
@@ -294,7 +325,8 @@ paced requests; to stop, it stops.
 - `src/config.ts`: environment validation.
 - `src/emit/`: the emit handler, the Judge client with retries, and pacing.
 - `src/fixtures/`: the scenario registry and the four deterministic builders.
-- `src/chaos/`: the seeded chaos template.
+- `src/chaos/`: the seeded chaos template and the Workers AI path that
+  builds on it.
 - `src/packet/`: the packet schema, identifier minting, and validation.
 - `docs/PACKET_CONTRACT.md`: field-by-field alignment with the Judge contract.
 - `test/docs.test.ts`: keeps this README and the contract document in step
