@@ -86,7 +86,8 @@ function resolveIngestUrl(raw: string | undefined): string {
   return url.href.replace(/\/+$/, "");
 }
 
-function resolveAllowlist(raw: string | undefined): readonly string[] {
+/** Parses the demo origin allowlist on its own so CORS works even when the ingest URL is unset. */
+export function resolveAllowlist(raw: string | undefined): readonly string[] {
   const value = presence(raw);
   if (value === undefined) {
     return [...DEFAULT_DEMO_ORIGIN_ALLOWLIST];
