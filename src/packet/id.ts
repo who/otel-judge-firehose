@@ -50,6 +50,13 @@ export function sanitizeScenarioSegment(scenario: string): string {
 }
 
 /**
+ * A source of uniform numbers in the half-open interval `[0, 1)`, the same
+ * contract as `Math.random`. Seeded fixture builds pass one so the suffix is
+ * reproducible; production callers leave it unset and get the CSPRNG.
+ */
+export type RandomSource = () => number;
+
+/**
  * Draws `length` base36 characters from the Workers-provided CSPRNG.
  * `crypto.getRandomValues` is a global on the Workers runtime and on Node 19+,
  * so no Node `crypto` import is needed (and none is allowed in this Worker).
@@ -74,15 +81,37 @@ function randomBase36(length: number): string {
   return out;
 }
 
+/** Draws `length` base36 characters from a caller-supplied `[0, 1)` source. */
+function seededBase36(length: number, random: RandomSource): string {
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    // Clamp so a source that returns exactly 1 (contract violation) cannot
+    // index past the alphabet and yield `undefined`.
+    const index = Math.min(Math.floor(random() * BASE36_ALPHABET.length), BASE36_ALPHABET.length - 1);
+    out += BASE36_ALPHABET[index];
+  }
+  return out;
+}
+
 /**
  * Mints a unique packet identifier for `scenario`.
  *
- * `now` defaults to the current time and exists so tests can pin the
- * timestamp segment; production callers never pass it.
+ * `now` defaults to the current time and exists so tests and seeded fixture
+ * builds can pin the timestamp segment. `random` replaces the CSPRNG as the
+ * suffix source; seeded fixture builds pass their deterministic generator so
+ * the same seed always yields the same identifier. Production emit paths
+ * pass neither.
  */
-export function mintPacketId(scenario: string, now: Date = new Date()): string {
+export function mintPacketId(
+  scenario: string,
+  now: Date = new Date(),
+  random?: RandomSource,
+): string {
   const segment = sanitizeScenarioSegment(scenario);
   const epochMillis = now.getTime();
-  const suffix = randomBase36(PACKET_ID_SUFFIX_LENGTH);
+  const suffix =
+    random === undefined
+      ? randomBase36(PACKET_ID_SUFFIX_LENGTH)
+      : seededBase36(PACKET_ID_SUFFIX_LENGTH, random);
   return `${PACKET_ID_PREFIX}_${segment}_${epochMillis}_${suffix}`;
 }
