@@ -1,0 +1,18 @@
+# Local development variables for `wrangler dev`.
+#
+# Copy this file to `.dev.vars` (which is git-ignored) and fill in real values.
+# These are placeholders only: real values belong in Worker secrets
+# (`wrangler secret put JUDGE_INGEST_TOKEN`) and in `wrangler.jsonc` vars,
+# never in a committed file.
+
+# Required. Absolute HTTPS URL of the otel-judge Worker ingress.
+# Plain http is accepted only for localhost / 127.0.0.1.
+JUDGE_FIREHOSE_URL=https://otel-judge.example.workers.dev
+
+# Optional. Sent as `Authorization: Bearer <token>` when set. Never logged.
+JUDGE_INGEST_TOKEN=replace-me
+
+# Optional. Comma-separated origins allowed to call the emit API.
+# Defaults to https://who.github.io. A single `*` allows any origin
+# and is a development-only setting.
+DEMO_ORIGIN_ALLOWLIST=https://who.github.io,http://localhost:5173

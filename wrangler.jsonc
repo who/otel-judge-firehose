@@ -6,5 +6,17 @@
   "compatibility_date": "2025-09-01",
   "observability": {
     "enabled": true
+  },
+  // Non-secret configuration. See `src/config.ts` (`resolveConfig`) for how
+  // these are validated, and `.dev.vars.example` for local overrides.
+  //
+  // JUDGE_INGEST_TOKEN is deliberately absent here: it is a secret and must be
+  // set with `wrangler secret put JUDGE_INGEST_TOKEN`, never committed.
+  "vars": {
+    // Required. Absolute HTTPS URL of the otel-judge Worker ingress.
+    // Placeholder value; override per deployment.
+    "JUDGE_FIREHOSE_URL": "https://otel-judge.example.workers.dev",
+    // Comma-separated origins allowed to call the emit API.
+    "DEMO_ORIGIN_ALLOWLIST": "https://who.github.io"
   }
 }
