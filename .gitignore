@@ -65,3 +65,7 @@ target/
 # Wrangler local secrets (copy from .dev.vars.example)
 .dev.vars
 !.dev.vars.example
+
+# Ortus / local agent runtime (never commit)
+.beads/ortus.flock
+.grok/
