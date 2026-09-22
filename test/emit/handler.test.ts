@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EmitRequestSchema, MAX_EMIT_COUNT, type EmitDeps } from "../../src/emit/handler";
+import { MAX_BURST, MAX_INTERVAL_MS } from "../../src/emit/pacing";
 import { listScenarios } from "../../src/fixtures/registry";
 import { routeRequest, type Env } from "../../src/index";
 import { PacketSchema } from "../../src/packet/schema";
@@ -70,6 +71,20 @@ describe("EmitRequestSchema", () => {
     expect(EmitRequestSchema.safeParse({ scenario: "healthy", count: MAX_EMIT_COUNT + 1 }).success).toBe(false);
     expect(EmitRequestSchema.safeParse({ scenario: "healthy", count: 1.5 }).success).toBe(false);
   });
+
+  it("leaves the pacing fields absent unless supplied and bounds them", () => {
+    expect(EmitRequestSchema.parse({ scenario: "healthy" })).not.toHaveProperty("intervalMs");
+    expect(EmitRequestSchema.parse({ scenario: "healthy" })).not.toHaveProperty("burst");
+    expect(EmitRequestSchema.parse({ scenario: "healthy", intervalMs: 250, burst: 3 })).toMatchObject({
+      intervalMs: 250,
+      burst: 3,
+    });
+    expect(EmitRequestSchema.safeParse({ scenario: "healthy", intervalMs: -1 }).success).toBe(false);
+    expect(EmitRequestSchema.safeParse({ scenario: "healthy", intervalMs: MAX_INTERVAL_MS + 1 }).success).toBe(false);
+    expect(EmitRequestSchema.safeParse({ scenario: "healthy", burst: 0 }).success).toBe(false);
+    expect(EmitRequestSchema.safeParse({ scenario: "healthy", burst: MAX_BURST + 1 }).success).toBe(false);
+    expect(EmitRequestSchema.safeParse({ scenario: "healthy", burst: 2.5 }).success).toBe(false);
+  });
 });
 
 describe("POST /emit", () => {
@@ -87,7 +102,9 @@ describe("POST /emit", () => {
       generated: 3,
       accepted: 3,
       dryRun: false,
+      truncated: false,
     });
+    expect(body.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(body.results).toHaveLength(3);
     expect(body.results.every((result: { accepted: boolean }) => result.accepted)).toBe(true);
 
@@ -109,6 +126,59 @@ describe("POST /emit", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ requested: 1, accepted: 1 });
     expect(calls).toHaveLength(1);
+  });
+
+  it("forwards packets in bursts spaced by the requested interval", async () => {
+    const { deps, calls } = judgeStub();
+    const sleeps: number[] = [];
+    let clock = 0;
+    const paced: EmitDeps = {
+      ...deps,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      now: () => clock,
+    };
+
+    const response = await routeRequest(
+      emit({ scenario: "healthy", count: 5, burst: 2, intervalMs: 300 }),
+      ENV,
+      paced,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await readBody(response);
+    expect(body).toMatchObject({ ok: true, requested: 5, generated: 5, accepted: 5, truncated: false });
+    expect(body.elapsedMs).toBe(600);
+    expect(calls).toHaveLength(5);
+    expect(sleeps).toEqual([300, 300]);
+  });
+
+  it("forwards packets until the ceiling and reports the run as truncated", async () => {
+    const { deps, calls } = judgeStub();
+    let clock = 0;
+    const paced: EmitDeps = {
+      ...deps,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+
+    const response = await routeRequest(
+      emit({ scenario: "healthy", count: 30, burst: 1, intervalMs: 2000 }),
+      ENV,
+      paced,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await readBody(response);
+    expect(body).toMatchObject({ ok: true, requested: 30, generated: 30, accepted: 11, truncated: true });
+    expect(body.elapsedMs).toBe(20000);
+    expect(body.packetIds).toHaveLength(30);
+    expect(body.results).toHaveLength(11);
+    expect(calls).toHaveLength(11);
   });
 
   it("forwards packets and still answers 200 when the Judge rejects one", async () => {
@@ -152,6 +222,8 @@ describe("POST /emit", () => {
       accepted: 0,
       dryRun: true,
       results: [],
+      truncated: false,
+      elapsedMs: 0,
     });
     expect(body.packetIds).toHaveLength(2);
     expect(calls).toHaveLength(0);

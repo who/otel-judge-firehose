@@ -5,6 +5,8 @@
  * was forwarded. The Judge ingest token stays in this Worker; it is never
  * echoed into a response. A dry run generates and validates but posts
  * nothing, which lets the demo prove its wiring without touching the Judge.
+ * Optional `intervalMs` and `burst` fields pace the run through `pacedEmit`
+ * so a demo board fills in visibly, bounded by a fixed wall-clock ceiling.
  */
 
 import { z } from "zod";
@@ -14,6 +16,7 @@ import { UnknownScenarioError, buildScenarioPackets } from "../fixtures/registry
 import type { Packet } from "../packet/schema";
 import { PacketValidationError, formatIssuePath, validatePackets } from "../packet/validate";
 import { postPackets, type JudgeClientDeps, type JudgePostResult } from "./judgeClient";
+import { MAX_BURST, MAX_INTERVAL_MS, pacedEmit, resolvePacing, type PacingDeps } from "./pacing";
 
 /**
  * Upper bound on packets per emit request. A Worker request has a wall-clock
@@ -31,6 +34,10 @@ export const EmitRequestSchema = z.object({
   seed: z.string().min(1, "seed must be a non-empty string").optional(),
   /** When true, generate and validate but post nothing. */
   dryRun: z.boolean().default(false),
+  /** Gap between bursts in milliseconds; omitted means no pacing. */
+  intervalMs: z.number().int().min(0).max(MAX_INTERVAL_MS).optional(),
+  /** Packets per burst; omitted means the whole count in one burst. */
+  burst: z.number().int().min(1).max(MAX_BURST).optional(),
 });
 
 export type EmitRequest = z.infer<typeof EmitRequestSchema>;
@@ -50,12 +57,21 @@ export interface EmitSummary {
   readonly packetIds: readonly string[];
   /** One result per posted packet; empty for a dry run. */
   readonly results: readonly JudgePostResult[];
+  /** True when the wall-clock ceiling cut the run short; the counts describe what was sent. */
+  readonly truncated: boolean;
+  /** Milliseconds from the first burst to the last result; zero for a dry run. */
+  readonly elapsedMs: number;
 }
 
-/** Injected hooks: the Judge client's fetch and sleep, plus the packet generator. */
+/**
+ * Injected hooks: the Judge client's fetch and sleep, the pacer's clock, and
+ * the packet generator. One `sleep` serves both retry backoff and pacing.
+ */
 export interface EmitDeps extends Partial<JudgeClientDeps> {
   /** Defaults to `buildScenarioPackets`; injectable so a generator fault can be exercised. */
   readonly buildPackets?: typeof buildScenarioPackets;
+  /** Defaults to `Date.now`; injectable so the wall-clock ceiling can be exercised. */
+  readonly now?: PacingDeps["now"];
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -63,6 +79,17 @@ function jsonResponse(body: unknown, status: number): Response {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+/** Forwards only the clock hooks that were actually injected so the pacer keeps its defaults. */
+function pacingDeps(
+  sleep: PacingDeps["sleep"] | undefined,
+  now: PacingDeps["now"] | undefined,
+): Partial<PacingDeps> {
+  return {
+    ...(sleep === undefined ? {} : { sleep }),
+    ...(now === undefined ? {} : { now }),
+  };
 }
 
 /**
@@ -118,8 +145,8 @@ export async function handleEmit(
       400,
     );
   }
-  const { scenario, count, seed, dryRun } = parsed.data;
-  const { buildPackets = buildScenarioPackets, ...clientDeps } = deps;
+  const { scenario, count, seed, dryRun, intervalMs, burst } = parsed.data;
+  const { buildPackets = buildScenarioPackets, now, ...clientDeps } = deps;
 
   let packets: Packet[];
   try {
@@ -141,7 +168,15 @@ export async function handleEmit(
   }
 
   const packetIds = packets.map((packet) => packet.packet_id);
-  const results = dryRun ? [] : await postPackets(config, packets, clientDeps);
+  const run = dryRun
+    ? { results: [], truncated: false, elapsedMs: 0 }
+    : await pacedEmit(
+        packets,
+        resolvePacing({ intervalMs, burst, count }),
+        (slice) => postPackets(config, slice, clientDeps),
+        pacingDeps(clientDeps.sleep, now),
+      );
+  const { results, truncated, elapsedMs } = run;
   const accepted = results.filter((result) => result.accepted).length;
 
   const summary: EmitSummary = {
@@ -153,6 +188,8 @@ export async function handleEmit(
     dryRun,
     packetIds,
     results,
+    truncated,
+    elapsedMs,
   };
   return jsonResponse(summary, 200);
 }
