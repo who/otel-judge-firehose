@@ -9,11 +9,10 @@ import { ConfigError, resolveAllowlist, resolveConfig, type FirehoseEnv } from "
 import { handleEmit, type EmitDeps } from "./emit/handler";
 import { listScenarios } from "./fixtures/registry";
 import { handlePreflight, withCors, type CorsConfig } from "./http/cors";
+import { SERVICE_NAME } from "./serviceName";
 
 /** Worker bindings; see `FirehoseEnv` for the individual variables. */
 export type Env = FirehoseEnv;
-
-export const SERVICE_NAME = "otel-judge-firehose";
 
 /** Routes the demo calls cross-origin; every response from these carries CORS headers. */
 const DEMO_ROUTES: ReadonlySet<string> = new Set(["/scenarios", "/emit"]);

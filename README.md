@@ -72,6 +72,19 @@ The demo holds only the public URL of this Worker. It never sees
 `JUDGE_FIREHOSE_URL` or the ingest token, and this producer never places a
 Judge secret in a CORS header or a response.
 
+## Firehose-only testing (no Judge)
+
+Generate varied packets and get them back in the response. Nothing is POSTed
+and `JUDGE_FIREHOSE_URL` is not required:
+
+```sh
+curl -s http://127.0.0.1:8787/emit \
+  -H 'content-type: application/json' \
+  -d '{"scenario":"chaos","count":10,"dryRun":true}' | jq '.packets[] | {packet_id,service,env,signals,alert_labels}'
+```
+
+Omit `seed` for fresh randomness each call. Max `count` is 50.
+
 ## Local development
 
 ```sh

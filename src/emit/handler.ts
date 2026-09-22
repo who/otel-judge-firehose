@@ -3,8 +3,8 @@
  *
  * The demo posts a scenario and a count and receives a JSON summary of what
  * was forwarded. The Judge ingest token stays in this Worker; it is never
- * echoed into a response. A dry run generates and validates but posts
- * nothing, which lets the demo prove its wiring without touching the Judge.
+ * echoed into a response. A dry run generates and validates, returns the packets in the response, and
+ * posts nothing — Firehose can be tested with no Judge URL at all.
  * Optional `intervalMs` and `burst` fields pace the run through `pacedEmit`
  * so a demo board fills in visibly, bounded by a fixed wall-clock ceiling.
  * An optional `llm` flag sends the chaos scenario's first burst through
@@ -67,6 +67,11 @@ export interface EmitSummary {
   readonly packetIds: readonly string[];
   /** One result per posted packet; empty for a dry run. */
   readonly results: readonly JudgePostResult[];
+  /**
+   * Full validated packets. Present only on `dryRun: true` so Firehose can be
+   * exercised with no Judge URL and no outbound POST.
+   */
+  readonly packets?: readonly Packet[];
   /** True when the wall-clock ceiling cut the run short; the counts describe what was sent. */
   readonly truncated: boolean;
   /** Milliseconds from the first burst to the last result; zero for a dry run. */
@@ -118,24 +123,6 @@ export async function handleEmit(
   env: FirehoseEnv,
   deps: EmitDeps = {},
 ): Promise<Response> {
-  let config: FirehoseConfig;
-  try {
-    config = resolveConfig(env);
-  } catch (error) {
-    if (error instanceof ConfigError) {
-      return jsonResponse(
-        {
-          ok: false,
-          error: "judge_not_configured",
-          variable: error.variable,
-          message: `${error.variable} is missing or invalid; the Worker is deployed but not wired to the Judge`,
-        },
-        503,
-      );
-    }
-    throw error;
-  }
-
   let raw: unknown;
   try {
     raw = await request.json();
@@ -163,6 +150,27 @@ export async function handleEmit(
   const { scenario, count, seed, dryRun, intervalMs, burst, llm } = parsed.data;
   const { buildPackets = buildScenarioPackets, now, ...clientDeps } = deps;
   const pacing = resolvePacing({ intervalMs, burst, count });
+
+  // Dry run is Firehose-only: generate + validate, no Judge URL, no POST.
+  let config: FirehoseConfig | undefined;
+  if (!dryRun) {
+    try {
+      config = resolveConfig(env);
+    } catch (error) {
+      if (error instanceof ConfigError) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "judge_not_configured",
+            variable: error.variable,
+            message: `${error.variable} is missing or invalid; the Worker is deployed but not wired to the Judge`,
+          },
+          503,
+        );
+      }
+      throw error;
+    }
+  }
 
   let packets: Packet[];
   let fallbackReason: string | undefined;
@@ -193,14 +201,30 @@ export async function handleEmit(
   }
 
   const packetIds = packets.map((packet) => packet.packet_id);
-  const run = dryRun
-    ? { results: [], truncated: false, elapsedMs: 0 }
-    : await pacedEmit(
-        packets,
-        pacing,
-        (slice) => postPackets(config, slice, clientDeps),
-        pacingDeps(clientDeps.sleep, now),
-      );
+  if (dryRun) {
+    const summary: EmitSummary = {
+      ok: true,
+      scenario,
+      requested: count,
+      generated: packets.length,
+      accepted: 0,
+      dryRun: true,
+      packetIds,
+      results: [],
+      packets,
+      truncated: false,
+      elapsedMs: 0,
+      ...(fallbackReason === undefined ? {} : { fallbackReason }),
+    };
+    return jsonResponse(summary, 200);
+  }
+
+  const run = await pacedEmit(
+    packets,
+    pacing,
+    (slice) => postPackets(config as FirehoseConfig, slice, clientDeps),
+    pacingDeps(clientDeps.sleep, now),
+  );
   const { results, truncated, elapsedMs } = run;
   const accepted = results.filter((result) => result.accepted).length;
 
@@ -210,7 +234,7 @@ export async function handleEmit(
     requested: count,
     generated: packets.length,
     accepted,
-    dryRun,
+    dryRun: false,
     packetIds,
     results,
     truncated,

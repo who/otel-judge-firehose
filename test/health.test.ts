@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import worker, { SERVICE_NAME, type Env } from "../src/index";
+import worker, { type Env } from "../src/index";
+import { SERVICE_NAME } from "../src/serviceName";
 
 const ctx = {} as ExecutionContext;
 

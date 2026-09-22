@@ -475,3 +475,34 @@ describe("CORS", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
+
+describe("standalone dryRun (no Judge)", () => {
+  it("packets are returned on dryRun without posting", async () => {
+    const deps = {
+      fetch: async () => {
+        throw new Error("dryRun must not fetch");
+      },
+      sleep: async () => {},
+    };
+    const response = await routeRequest(
+      emit({ scenario: "chaos", count: 3, dryRun: true }),
+      {}, // empty env — no JUDGE_FIREHOSE_URL
+      deps,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      dryRun: boolean;
+      generated: number;
+      accepted: number;
+      packets: Array<{ packet_id: string; service: string }>;
+      results: unknown[];
+    };
+    expect(body.dryRun).toBe(true);
+    expect(body.generated).toBe(3);
+    expect(body.accepted).toBe(0);
+    expect(body.results).toEqual([]);
+    expect(body.packets).toHaveLength(3);
+    expect(new Set(body.packets.map((p) => p.service)).size).toBeGreaterThan(0);
+    expect(body.packets[0]?.packet_id).toMatch(/^pkt_chaos_/);
+  });
+});
