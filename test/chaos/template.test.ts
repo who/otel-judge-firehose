@@ -44,7 +44,7 @@ describe("chaos template", () => {
         expect(signals.p95_latency_ms).toBeGreaterThan(0);
         expect(signals.p95_latency_baseline_ms).toBeGreaterThan(0);
         expect(signals.slo_burn_rate).toBeGreaterThan(0);
-        expect(signals.request_rate).toBeGreaterThan(0);
+        expect(signals.request_rate_rps).toBeGreaterThan(0);
 
         // Span mix is bounded, drawn from the pool, and duplicate-free.
         expect(packet.top_spans.length).toBeGreaterThanOrEqual(MIN_SPANS);
@@ -61,11 +61,18 @@ describe("chaos template", () => {
           expect(ALERT_LABEL_POOL).toContain(label);
         }
 
-        if (packet.recent_deploy !== null) {
+        if (packet.recent_deploy !== undefined) {
           deployed += 1;
-          expect(packet.recent_deploy.sha).toMatch(/^[0-9a-f]{12}$/);
+          expect(packet.recent_deploy.version.length).toBeGreaterThan(0);
+          expect(packet.recent_deploy.minutes_ago).toBeGreaterThanOrEqual(0);
+          expect(packet.recent_deploy).not.toHaveProperty("sha");
           expect(Date.parse(packet.recent_deploy.deployed_at)).toBeLessThan(Date.parse(packet.window.start));
         }
+        for (const span of packet.top_spans) {
+          expect(span.error_count).toBeGreaterThanOrEqual(0);
+          expect(span.error_count).toBeLessThanOrEqual(span.count);
+        }
+        expect(packet.schema_version).toBe(1);
         total += 1;
       }
     }
@@ -125,6 +132,7 @@ describe("chaos template", () => {
       "dependency_timeouts",
       "noise_storm",
       "chaos",
+      "demo_mix",
     ]);
     expect(chaos?.description.toLowerCase()).toContain("randomized");
     expect(SCENARIOS.chaos?.build).toBe(buildChaosPacket);

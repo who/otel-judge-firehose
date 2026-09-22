@@ -7,7 +7,7 @@
  * the Judge has nothing to escalate.
  */
 
-import type { Packet } from "../packet/schema";
+import { PACKET_SCHEMA_VERSION, type Packet } from "../packet/schema";
 import type { BuildContext } from "./registry";
 import { between, hex, intBetween, pick, round } from "./rng";
 
@@ -31,6 +31,7 @@ export function buildHealthy({ random, packetId, window }: BuildContext): Packet
           {
             name: pick(random, QUIET_SPANS),
             count: intBetween(random, 60_000, 90_000),
+            error_count: intBetween(random, 0, 5),
             p95_ms: round(between(random, 120, 260), 1),
           },
         ];
@@ -38,6 +39,7 @@ export function buildHealthy({ random, packetId, window }: BuildContext): Packet
   const exemplarTraceIds = intBetween(random, 0, 1) === 0 ? [] : [hex(random, 32)];
 
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: packetId,
     service: HEALTHY_SERVICE,
     env: "prod",
@@ -47,12 +49,11 @@ export function buildHealthy({ random, packetId, window }: BuildContext): Packet
       error_rate_baseline: errorRateBaseline,
       p95_latency_ms: p95,
       p95_latency_baseline_ms: p95Baseline,
+      request_rate_rps: requestRate,
       slo_burn_rate: burnRate,
-      request_rate: requestRate,
     },
     top_spans: topSpans,
     exemplar_trace_ids: exemplarTraceIds,
-    recent_deploy: null,
     alert_labels: [],
   };
 }

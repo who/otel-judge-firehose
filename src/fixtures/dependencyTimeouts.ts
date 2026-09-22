@@ -11,7 +11,7 @@
  * and the alert labels name both the dependency and the latency symptom.
  */
 
-import type { Packet } from "../packet/schema";
+import { PACKET_SCHEMA_VERSION, type Packet } from "../packet/schema";
 import type { BuildContext } from "./registry";
 import { between, hex, intBetween, round } from "./rng";
 
@@ -52,16 +52,19 @@ export function buildDependencyTimeouts({ random, packetId, window }: BuildConte
     {
       name: DEPENDENCY_TIMEOUTS_UPSTREAM_SPAN,
       count: upstreamCount,
+      error_count: intBetween(random, Math.floor(upstreamCount * 0.04), Math.floor(upstreamCount * 0.15)),
       p95_ms: round(Math.min(p95 * between(random, 0.97, 1.0), DEPENDENCY_TIMEOUTS_CEILING_MS), 1),
     },
     {
       name: "POST /checkout",
       count: intBetween(random, Math.floor(upstreamCount * 0.6), Math.floor(upstreamCount * 0.9)),
+      error_count: intBetween(random, Math.floor(upstreamCount * 0.02), Math.floor(upstreamCount * 0.1)),
       p95_ms: round(p95 * between(random, 0.9, 0.97), 1),
     },
     {
       name: "db.query orders",
       count: intBetween(random, Math.floor(upstreamCount * 0.3), Math.floor(upstreamCount * 0.5)),
+      error_count: intBetween(random, 0, 20),
       p95_ms: round(between(random, 40, 120), 1),
     },
   ];
@@ -70,6 +73,7 @@ export function buildDependencyTimeouts({ random, packetId, window }: BuildConte
   const exemplarTraceIds = Array.from({ length: exemplarCount }, () => hex(random, 32));
 
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: packetId,
     service: DEPENDENCY_TIMEOUTS_SERVICE,
     env: "prod",
@@ -79,12 +83,11 @@ export function buildDependencyTimeouts({ random, packetId, window }: BuildConte
       error_rate_baseline: errorRateBaseline,
       p95_latency_ms: p95,
       p95_latency_baseline_ms: p95Baseline,
+      request_rate_rps: requestRate,
       slo_burn_rate: burnRate,
-      request_rate: requestRate,
     },
     top_spans: topSpans,
     exemplar_trace_ids: exemplarTraceIds,
-    recent_deploy: null,
     alert_labels: [...DEPENDENCY_TIMEOUTS_LABELS],
   };
 }

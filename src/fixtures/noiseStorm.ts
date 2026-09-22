@@ -10,7 +10,7 @@
  * long list of flapping, low-value alert labels with no duplicates.
  */
 
-import type { Packet, TopSpan } from "../packet/schema";
+import { PACKET_SCHEMA_VERSION, type Packet, type TopSpan } from "../packet/schema";
 import type { BuildContext } from "./registry";
 import { between, hex, intBetween, round, type RandomSource } from "./rng";
 
@@ -75,6 +75,7 @@ export function buildNoiseStorm({ random, packetId, window }: BuildContext): Pac
   const topSpans: TopSpan[] = spanNames.map((name) => ({
     name,
     count: intBetween(random, 5, 120),
+    error_count: intBetween(random, 0, 3),
     p95_ms: round(between(random, 20, 180), 1),
   }));
 
@@ -87,6 +88,7 @@ export function buildNoiseStorm({ random, packetId, window }: BuildContext): Pac
   const exemplarTraceIds = intBetween(random, 0, 1) === 0 ? [] : [hex(random, 32)];
 
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: packetId,
     service: NOISE_STORM_SERVICE,
     env: "prod",
@@ -96,12 +98,11 @@ export function buildNoiseStorm({ random, packetId, window }: BuildContext): Pac
       error_rate_baseline: errorRateBaseline,
       p95_latency_ms: p95,
       p95_latency_baseline_ms: p95Baseline,
+      request_rate_rps: requestRate,
       slo_burn_rate: burnRate,
-      request_rate: requestRate,
     },
     top_spans: topSpans,
     exemplar_trace_ids: exemplarTraceIds,
-    recent_deploy: null,
     alert_labels: alertLabels,
   };
 }

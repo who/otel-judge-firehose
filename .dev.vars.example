@@ -12,6 +12,10 @@ JUDGE_FIREHOSE_URL=https://otel-judge.example.workers.dev
 # Optional. Sent as `Authorization: Bearer <token>` when set. Never logged.
 JUDGE_INGEST_TOKEN=replace-me
 
+# Optional. Shared with otel-judge for HMAC `x-firehose-signature` on ingest.
+# Local triangle: use the same value in both Workers' `.dev.vars`.
+FIREHOSE_SECRET=local-dev-otel-judge-firehose
+
 # Optional. Comma-separated origins allowed to call the emit API.
 # Defaults to https://who.github.io. A single `*` allows any origin
 # and is a development-only setting.

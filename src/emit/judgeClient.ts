@@ -51,20 +51,43 @@ function defaultFetch(input: string, init: RequestInit): Promise<Response> {
 
 const DEFAULT_DEPS: JudgeClientDeps = { fetch: defaultFetch, sleep: defaultSleep };
 
+const encoder = new TextEncoder();
+
+/**
+ * HMAC-SHA256 of the raw body bytes as lowercase hex. Matches Judge
+ * `signFirehoseBody` in `src/ingress/verify.ts` so ingress accepts the POST.
+ */
+export async function signFirehoseBody(secret: string, rawBody: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /** Builds the URL and request init for a single packet POST. */
-export function buildPacketRequest(
+export async function buildPacketRequest(
+
   config: FirehoseConfig,
   packet: Packet,
-): { url: string; init: RequestInit } {
+): Promise<{ url: string; init: RequestInit }> {
+  const body = JSON.stringify(packet);
   const headers: Record<string, string> = {
     "content-type": "application/json",
   };
   if (config.judgeIngestToken !== undefined) {
     headers.authorization = `Bearer ${config.judgeIngestToken}`;
   }
+  if (config.firehoseSecret !== undefined) {
+    headers["x-firehose-signature"] = await signFirehoseBody(config.firehoseSecret, body);
+  }
   return {
     url: config.judgeFirehoseUrl,
-    init: { method: "POST", headers, body: JSON.stringify(packet) },
+    init: { method: "POST", headers, body },
   };
 }
 
@@ -97,7 +120,7 @@ export async function postPacket(
   deps: Partial<JudgeClientDeps> = {},
 ): Promise<JudgePostResult> {
   const { fetch: doFetch, sleep } = { ...DEFAULT_DEPS, ...deps };
-  const { url, init } = buildPacketRequest(config, packet);
+  const { url, init } = await buildPacketRequest(config, packet);
   const packetId = packet.packet_id;
 
   let attempts = 0;

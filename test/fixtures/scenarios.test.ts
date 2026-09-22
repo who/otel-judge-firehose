@@ -42,7 +42,7 @@ describe("dependency timeouts", () => {
       expect(signals.slo_burn_rate).toBeLessThan(3);
 
       // Not deploy related.
-      expect(packet.recent_deploy).toBeNull();
+      expect(packet.recent_deploy).toBeUndefined();
 
       // The upstream client span leads and dominates the span list.
       expect(packet.top_spans.length).toBeGreaterThanOrEqual(2);
@@ -82,7 +82,7 @@ describe("noise storm", () => {
       expect(signals.slo_burn_rate).toBeLessThan(NOISE_STORM_BURN_RATE_CEILING);
 
       // Not deploy related.
-      expect(packet.recent_deploy).toBeNull();
+      expect(packet.recent_deploy).toBeUndefined();
 
       // Many low-count spans, none of them hot.
       expect(packet.top_spans.length).toBeGreaterThanOrEqual(NOISE_STORM_MIN_SPANS);
@@ -131,7 +131,7 @@ describe("all scenarios validate", () => {
           expect(packet.signals.error_rate).toBeGreaterThanOrEqual(0);
           expect(packet.signals.error_rate).toBeLessThanOrEqual(1);
           expect(packet.signals.p95_latency_ms).toBeGreaterThanOrEqual(0);
-          expect(packet.recent_deploy === null || typeof packet.recent_deploy === "object").toBe(true);
+          expect(packet.recent_deploy === undefined || typeof packet.recent_deploy === "object").toBe(true);
           expect(new Set(packet.alert_labels).size).toBe(packet.alert_labels.length);
         }
       }
@@ -156,10 +156,10 @@ describe("all scenarios validate", () => {
     const [noise] = buildScenarioPackets("noise_storm", 1, { seed: "x" });
 
     // Only the post-deploy burn is deploy related.
-    expect(burn?.recent_deploy).not.toBeNull();
-    expect(healthy?.recent_deploy).toBeNull();
-    expect(timeouts?.recent_deploy).toBeNull();
-    expect(noise?.recent_deploy).toBeNull();
+    expect(burn?.recent_deploy).toBeDefined();
+    expect(healthy?.recent_deploy).toBeUndefined();
+    expect(timeouts?.recent_deploy).toBeUndefined();
+    expect(noise?.recent_deploy).toBeUndefined();
 
     // Latency ratio separates dependency timeouts from the burn and from the quiet ones.
     const ratio = (p: typeof healthy) => (p?.signals.p95_latency_ms ?? 0) / (p?.signals.p95_latency_baseline_ms ?? 1);
@@ -180,16 +180,16 @@ describe("all scenarios validate", () => {
 });
 
 describe("four scenarios", () => {
-  it("the scenario listing reports the four fixtures first, in registration order, then chaos", () => {
+  it("the scenario listing reports the four fixtures first, in registration order, then the drawn ones", () => {
     const listed = listScenarios();
 
-    expect(listed).toHaveLength(5);
+    expect(listed).toHaveLength(6);
     expect(listed.slice(0, 4).map((entry) => entry.id)).toEqual([...ALL_SCENARIO_IDS]);
-    expect(listed.at(-1)?.id).toBe("chaos");
+    expect(listed.slice(4).map((entry) => entry.id)).toEqual(["chaos", "demo_mix"]);
     for (const entry of listed) {
       expect(entry.description.length).toBeGreaterThan(20);
       expect(SCENARIOS[entry.id]?.description).toBe(entry.description);
     }
-    expect(Object.keys(SCENARIOS)).toHaveLength(5);
+    expect(Object.keys(SCENARIOS)).toHaveLength(6);
   });
 });

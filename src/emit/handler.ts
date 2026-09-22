@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import { buildLlmChaosPackets } from "../chaos/llm";
 import { ConfigError, resolveConfig, type FirehoseConfig, type FirehoseEnv } from "../config";
-import { CHAOS_SCENARIO_ID, UnknownScenarioError, buildScenarioPackets } from "../fixtures/registry";
+import { CHAOS_SCENARIO_ID, UnknownScenarioError, buildScenarioPackets, resolveScenarioId } from "../fixtures/registry";
 import type { Packet } from "../packet/schema";
 import { PacketValidationError, formatIssuePath, validatePackets } from "../packet/validate";
 import { postPackets, type JudgeClientDeps, type JudgePostResult } from "./judgeClient";
@@ -148,6 +148,7 @@ export async function handleEmit(
     );
   }
   const { scenario, count, seed, dryRun, intervalMs, burst, llm } = parsed.data;
+  const resolvedScenario = resolveScenarioId(scenario);
   const { buildPackets = buildScenarioPackets, now, ...clientDeps } = deps;
   const pacing = resolvePacing({ intervalMs, burst, count });
 
@@ -175,8 +176,8 @@ export async function handleEmit(
   let packets: Packet[];
   let fallbackReason: string | undefined;
   try {
-    let candidates: readonly unknown[] = buildPackets(scenario, count, seed === undefined ? {} : { seed });
-    if (llm === true && scenario === CHAOS_SCENARIO_ID) {
+    let candidates: readonly unknown[] = buildPackets(resolvedScenario, count, seed === undefined ? {} : { seed });
+    if (llm === true && resolvedScenario === CHAOS_SCENARIO_ID) {
       // Model latency stays out of the paced part of the run: only the first
       // burst is model-written, and every result is validated again below.
       const rewritten = await buildLlmChaosPackets(validatePackets(candidates), pacing.burst, env.AI);

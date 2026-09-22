@@ -15,6 +15,7 @@ import {
 
 function validPacket(overrides: Partial<PacketInput> = {}): PacketInput {
   return {
+    schema_version: 1,
     packet_id: mintPacketId("healthy"),
     service: "checkout-api",
     env: "prod",
@@ -28,11 +29,10 @@ function validPacket(overrides: Partial<PacketInput> = {}): PacketInput {
       p95_latency_ms: 1850,
       p95_latency_baseline_ms: 420,
       slo_burn_rate: 14.2,
-      request_rate: 312.5,
+      request_rate_rps: 312.5,
     },
-    top_spans: [{ name: "POST /checkout", count: 9_400, p95_ms: 1_900 }],
+    top_spans: [{ name: "POST /checkout", count: 9_400, error_count: 940, p95_ms: 1_900 }],
     exemplar_trace_ids: ["4bf92f3577b34da6a3ce929d0e0e4736"],
-    recent_deploy: null,
     alert_labels: ["slo:checkout-availability"],
     ...overrides,
   };
@@ -147,7 +147,7 @@ describe("validatePackets", () => {
     const good = validPacket();
     const badId = validPacket({ packet_id: "not-a-packet-id" });
     const badRate = validPacket({
-      signals: { ...validPacket().signals, request_rate: -1 },
+      signals: { ...validPacket().signals, request_rate_rps: -1 },
     });
 
     const error = captureError(() => validatePackets([good, badId, good, badRate, null]));
@@ -155,10 +155,10 @@ describe("validatePackets", () => {
     expect(error.failedIndices).toEqual([1, 3, 4]);
     const paths = error.issues.map((issue) => formatIssuePath(issue.path));
     expect(paths).toContain("[1].packet_id");
-    expect(paths).toContain("[3].signals.request_rate");
+    expect(paths).toContain("[3].signals.request_rate_rps");
     expect(paths).toContain("[4]");
     expect(error.message).toContain("3 packets failed validation at index 1, 3, 4");
     expect(error.message).toContain("[1].packet_id");
-    expect(error.message).toContain("[3].signals.request_rate");
+    expect(error.message).toContain("[3].signals.request_rate_rps");
   });
 });

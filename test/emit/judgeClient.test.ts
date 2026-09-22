@@ -7,6 +7,7 @@ import {
   buildPacketRequest,
   postPacket,
   postPackets,
+  signFirehoseBody,
   type JudgeClientDeps,
 } from "../../src/emit/judgeClient";
 import { PacketSchema, type Packet, type PacketInput } from "../../src/packet/schema";
@@ -21,6 +22,7 @@ const CONFIG: FirehoseConfig = {
 
 function packet(id = "pkt_healthy_1758500000000_abc123"): Packet {
   const input: PacketInput = {
+    schema_version: 1,
     packet_id: id,
     service: "checkout-api",
     env: "prod",
@@ -31,11 +33,10 @@ function packet(id = "pkt_healthy_1758500000000_abc123"): Packet {
       p95_latency_ms: 1850,
       p95_latency_baseline_ms: 420,
       slo_burn_rate: 14.2,
-      request_rate: 312.5,
+      request_rate_rps: 312.5,
     },
-    top_spans: [{ name: "POST /checkout", count: 9_400, p95_ms: 1_900 }],
+    top_spans: [{ name: "POST /checkout", count: 9_400, error_count: 940, p95_ms: 1_900 }],
     exemplar_trace_ids: ["4bf92f3577b34da6a3ce929d0e0e4736"],
-    recent_deploy: null,
     alert_labels: ["slo:checkout-availability"],
   };
   return PacketSchema.parse(input);
@@ -77,9 +78,9 @@ function stub(outcomes: Outcome[]): {
 }
 
 describe("buildPacketRequest", () => {
-  it("posts the JSON packet to the ingest URL with a bearer header", () => {
+  it("posts the JSON packet to the ingest URL with a bearer header", async () => {
     const p = packet();
-    const { url, init } = buildPacketRequest(CONFIG, p);
+    const { url, init } = await buildPacketRequest(CONFIG, p);
 
     expect(url).toBe(CONFIG.judgeFirehoseUrl);
     expect(init.method).toBe("POST");
@@ -90,13 +91,26 @@ describe("buildPacketRequest", () => {
     expect(JSON.parse(init.body as string)).toEqual(p);
   });
 
-  it("omits the authorization header when no token is configured", () => {
-    const { init } = buildPacketRequest(
+  it("omits the authorization header when no token is configured", async () => {
+    const { init } = await buildPacketRequest(
       { judgeFirehoseUrl: CONFIG.judgeFirehoseUrl, demoOriginAllowlist: [] },
       packet(),
     );
 
     expect(init.headers).toEqual({ "content-type": "application/json" });
+  });
+
+  it("adds x-firehose-signature when FIREHOSE_SECRET is configured", async () => {
+    const secret = "local-dev-otel-judge-firehose";
+    const p = packet();
+    const { init } = await buildPacketRequest(
+      { judgeFirehoseUrl: CONFIG.judgeFirehoseUrl, firehoseSecret: secret, demoOriginAllowlist: [] },
+      p,
+    );
+    const body = init.body as string;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-firehose-signature"]).toBe(await signFirehoseBody(secret, body));
+    expect(headers).not.toHaveProperty("authorization");
   });
 });
 

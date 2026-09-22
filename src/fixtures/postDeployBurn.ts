@@ -3,12 +3,13 @@
  *
  * Error rate runs ten to thirty times baseline, p95 latency two to four
  * times baseline, and the burn rate is above 4, so the error budget is being
- * consumed far faster than allowed. `recent_deploy` is populated with a short
- * synthetic sha deployed shortly before the window, and the alert labels
- * name both the burn and the deploy window so the Judge can tie them together.
+ * consumed far faster than allowed. `recent_deploy` is populated with a version
+ * deployed shortly before the window (Judge shape: version, deployed_at,
+ * minutes_ago; no sha), and the alert labels name both the burn and the deploy
+ * window so the Judge can tie them together.
  */
 
-import type { Packet } from "../packet/schema";
+import { PACKET_SCHEMA_VERSION, type Packet } from "../packet/schema";
 import { isoSeconds, type BuildContext } from "./registry";
 import { between, hex, intBetween, round } from "./rng";
 
@@ -32,10 +33,16 @@ export function buildPostDeployBurn({ random, packetId, window, nowMs }: BuildCo
 
   const hotCount = intBetween(random, 7_000, 12_000);
   const topSpans = [
-    { name: "POST /checkout", count: hotCount, p95_ms: round(p95 * between(random, 0.95, 1.05), 1) },
+    {
+      name: "POST /checkout",
+      count: hotCount,
+      error_count: intBetween(random, Math.floor(hotCount * 0.08), Math.floor(hotCount * 0.25)),
+      p95_ms: round(p95 * between(random, 0.95, 1.05), 1),
+    },
     {
       name: "db.query orders",
       count: intBetween(random, Math.floor(hotCount * 0.8), hotCount),
+      error_count: intBetween(random, Math.floor(hotCount * 0.05), Math.floor(hotCount * 0.2)),
       p95_ms: round(p95 * between(random, 0.5, 0.8), 1),
     },
   ];
@@ -48,6 +55,7 @@ export function buildPostDeployBurn({ random, packetId, window, nowMs }: BuildCo
   )}-${intBetween(random, 1, 9)}`;
 
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: packetId,
     service: POST_DEPLOY_BURN_SERVICE,
     env: "prod",
@@ -57,15 +65,15 @@ export function buildPostDeployBurn({ random, packetId, window, nowMs }: BuildCo
       error_rate_baseline: errorRateBaseline,
       p95_latency_ms: p95,
       p95_latency_baseline_ms: p95Baseline,
+      request_rate_rps: requestRate,
       slo_burn_rate: burnRate,
-      request_rate: requestRate,
     },
     top_spans: topSpans,
     exemplar_trace_ids: [hex(random, 32), hex(random, 32)],
     recent_deploy: {
-      sha: hex(random, 12),
       version,
       deployed_at: isoSeconds(deployedAtMs),
+      minutes_ago: Math.max(0, Math.round((nowMs - deployedAtMs) / MINUTE_MS)),
     },
     alert_labels: [...POST_DEPLOY_BURN_LABELS],
   };

@@ -19,6 +19,12 @@ export interface FirehoseEnv {
    * present. Never echo this value into a response body or a log line.
    */
   JUDGE_INGEST_TOKEN?: string;
+  /**
+   * Shared HMAC secret for `x-firehose-signature`. When set, every packet POST
+   * is signed with HMAC-SHA256 of the exact JSON body (lowercase hex). Never
+   * echo this value into a response body or a log line.
+   */
+  FIREHOSE_SECRET?: string;
   /** Comma-separated demo origins allowed to call the emit API. */
   DEMO_ORIGIN_ALLOWLIST?: string;
   /**
@@ -35,6 +41,8 @@ export interface FirehoseConfig {
   readonly judgeFirehoseUrl: string;
   /** Present only when `JUDGE_INGEST_TOKEN` was set to a non-blank value. */
   readonly judgeIngestToken?: string;
+  /** Present only when `FIREHOSE_SECRET` was set to a non-blank value. */
+  readonly firehoseSecret?: string;
   /** Parsed allowlist; a single `*` entry means any origin (development only). */
   readonly demoOriginAllowlist: readonly string[];
 }
@@ -118,8 +126,12 @@ export function resolveConfig(env: FirehoseEnv): FirehoseConfig {
   const judgeFirehoseUrl = resolveIngestUrl(env.JUDGE_FIREHOSE_URL);
   const demoOriginAllowlist = resolveAllowlist(env.DEMO_ORIGIN_ALLOWLIST);
   const judgeIngestToken = presence(env.JUDGE_INGEST_TOKEN);
+  const firehoseSecret = presence(env.FIREHOSE_SECRET);
 
-  return judgeIngestToken === undefined
-    ? { judgeFirehoseUrl, demoOriginAllowlist }
-    : { judgeFirehoseUrl, judgeIngestToken, demoOriginAllowlist };
+  const base: FirehoseConfig = { judgeFirehoseUrl, demoOriginAllowlist };
+  return {
+    ...base,
+    ...(judgeIngestToken === undefined ? {} : { judgeIngestToken }),
+    ...(firehoseSecret === undefined ? {} : { firehoseSecret }),
+  };
 }

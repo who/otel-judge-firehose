@@ -79,6 +79,24 @@ describe("resolveConfig", () => {
     );
   });
 
+  it("resolves without a firehoseSecret field when the secret is absent or blank", () => {
+    expect(resolveConfig({ JUDGE_FIREHOSE_URL: "https://judge.example" })).not.toHaveProperty(
+      "firehoseSecret",
+    );
+    expect(
+      resolveConfig({ JUDGE_FIREHOSE_URL: "https://judge.example", FIREHOSE_SECRET: "   " }),
+    ).not.toHaveProperty("firehoseSecret");
+  });
+
+  it("resolves firehoseSecret when set", () => {
+    expect(
+      resolveConfig({
+        JUDGE_FIREHOSE_URL: "https://judge.example",
+        FIREHOSE_SECRET: "local-dev-otel-judge-firehose",
+      }).firehoseSecret,
+    ).toBe("local-dev-otel-judge-firehose");
+  });
+
   it("rejects a plain http ingest URL on a non-local host", () => {
     let caught: unknown;
     try {

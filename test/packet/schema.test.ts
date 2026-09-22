@@ -14,6 +14,7 @@ import {
 
 function validPacket(): PacketInput {
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: "pkt_post_deploy_burn_1758480000000_k3f9zq",
     service: "checkout-api",
     env: "prod",
@@ -26,18 +27,18 @@ function validPacket(): PacketInput {
       error_rate_baseline: 0.004,
       p95_latency_ms: 1850,
       p95_latency_baseline_ms: 420,
+      request_rate_rps: 312.5,
       slo_burn_rate: 14.2,
-      request_rate: 312.5,
     },
     top_spans: [
-      { name: "POST /checkout", count: 9_400, p95_ms: 1_900 },
-      { name: "db.query orders", count: 9_100, p95_ms: 1_200 },
+      { name: "POST /checkout", count: 9_400, error_count: 940, p95_ms: 1_900 },
+      { name: "db.query orders", count: 9_100, error_count: 120, p95_ms: 1_200 },
     ],
     exemplar_trace_ids: ["4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7a3ce929d0e0e4736"],
     recent_deploy: {
-      sha: "9fceb02d0ae598e95dc970b74767f19372d61af8",
       version: "2026.09.21-3",
       deployed_at: "2026-09-21T11:58:30Z",
+      minutes_ago: 6.5,
     },
     alert_labels: ["slo:checkout-availability", "severity:page"],
     log_snippets: ["ERROR orders-db: connection pool exhausted (max=50)"],
@@ -61,7 +62,9 @@ describe("PacketSchema", () => {
 
     expect(packet).toEqual(input);
     expect(packet.env).toBe("prod");
-    expect(packet.recent_deploy?.sha).toBe("9fceb02d0ae598e95dc970b74767f19372d61af8");
+    expect(packet.schema_version).toBe(1);
+    expect(packet.recent_deploy?.version).toBe("2026.09.21-3");
+    expect(packet.recent_deploy?.minutes_ago).toBe(6.5);
   });
 
   it("parses a valid packet without the optional log snippets", () => {
@@ -78,10 +81,16 @@ describe("PacketSchema", () => {
     expect(packet.top_spans).toEqual([]);
   });
 
-  it("parses a valid packet with recent_deploy set to null", () => {
-    const packet = PacketSchema.parse({ ...validPacket(), recent_deploy: null });
+  it("parses a valid packet with recent_deploy omitted", () => {
+    const { recent_deploy: _omitted, ...input } = validPacket();
 
-    expect(packet.recent_deploy).toBeNull();
+    const packet = PacketSchema.parse(input);
+
+    expect(packet).not.toHaveProperty("recent_deploy");
+  });
+
+  it("rejects recent_deploy null (omit the field instead)", () => {
+    expect(issuePaths({ ...validPacket(), recent_deploy: null })).toEqual(["recent_deploy"]);
   });
 
   it("strips unknown extra keys instead of rejecting the packet", () => {
@@ -120,9 +129,20 @@ describe("PacketSchema", () => {
     expect(issuePaths({ ...input, signals: { ...input.signals, p95_latency_ms: -1 } })).toEqual([
       "signals.p95_latency_ms",
     ]);
-    expect(issuePaths({ ...input, signals: { ...input.signals, request_rate: -5 } })).toEqual([
-      "signals.request_rate",
+    expect(issuePaths({ ...input, signals: { ...input.signals, request_rate_rps: -5 } })).toEqual([
+      "signals.request_rate_rps",
     ]);
+  });
+
+  it("rejects a packet missing schema_version", () => {
+    const { schema_version: _omitted, ...input } = validPacket();
+    expect(issuePaths(input)).toEqual(["schema_version"]);
+  });
+
+  it("rejects a top span missing error_count", () => {
+    const input = validPacket();
+    const badSpan = { name: "POST /x", count: 1, p95_ms: 10 };
+    expect(issuePaths({ ...input, top_spans: [badSpan] })).toEqual(["top_spans.0.error_count"]);
   });
 
   it("rejects an inverted window whose end precedes its start", () => {
@@ -160,12 +180,6 @@ describe("PacketSchema", () => {
     ).toEqual(["window.start"]);
   });
 
-  it("rejects a packet where recent_deploy is absent rather than null", () => {
-    const { recent_deploy: _omitted, ...input } = validPacket();
-
-    expect(issuePaths(input)).toEqual(["recent_deploy"]);
-  });
-
   it("rejects an env outside the closed enum", () => {
     expect(issuePaths({ ...validPacket(), env: "production" })).toEqual(["env"]);
     expect([...PACKET_ENVS]).toEqual(["prod", "staging", "dev"]);
@@ -198,13 +212,12 @@ describe("component schemas", () => {
     expect(SignalsSchema.parse(input.signals)).toEqual(input.signals);
     expect(TopSpanSchema.parse(input.top_spans[0])).toEqual(input.top_spans[0]);
     expect(RecentDeploySchema.parse(input.recent_deploy)).toEqual(input.recent_deploy);
-    expect(TopSpanSchema.safeParse({ name: "x", count: 1.5, p95_ms: 1 }).success).toBe(false);
+    expect(TopSpanSchema.safeParse({ name: "x", count: 1.5, error_count: 0, p95_ms: 1 }).success).toBe(false);
   });
 });
 
 describe("schema version", () => {
   it("exports the schema version constant equal to 1", () => {
-    expect(PACKET_SCHEMA_VERSION).toBe("1");
-    expect(Number(PACKET_SCHEMA_VERSION)).toBe(1);
+    expect(PACKET_SCHEMA_VERSION).toBe(1);
   });
 });

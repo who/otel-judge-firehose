@@ -97,7 +97,7 @@ describe("packet contract document", () => {
   });
 
   it("records the additive versioning rule and the current version", () => {
-    expect(contract).toContain(`\`PACKET_SCHEMA_VERSION\` is \`"${PACKET_SCHEMA_VERSION}"\``);
+    expect(contract).toContain(`\`PACKET_SCHEMA_VERSION\` is \`${PACKET_SCHEMA_VERSION}\``);
     expect(contract).toMatch(/additive, optional fields/i);
   });
 
@@ -120,7 +120,7 @@ describe("packet contract document", () => {
 describe("readme", () => {
   it("readme variables: documents every FirehoseEnv variable by name", () => {
     const variables = declaredEnvVariables();
-    expect(variables).toHaveLength(3);
+    expect(variables).toHaveLength(4);
     expect(variables).toContain("JUDGE_FIREHOSE_URL");
     expect(missing(variables, readme)).toEqual([]);
   });

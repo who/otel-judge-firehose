@@ -233,8 +233,8 @@ function describeSignals(base: Packet): string {
     p95_latency_ms: signals.p95_latency_ms,
     p95_latency_baseline_ms: signals.p95_latency_baseline_ms,
     slo_burn_rate: signals.slo_burn_rate,
-    request_rate: signals.request_rate,
-    recent_deploy: base.recent_deploy !== null,
+    request_rate_rps: signals.request_rate_rps,
+    recent_deploy: base.recent_deploy !== undefined,
   });
 }
 

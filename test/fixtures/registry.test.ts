@@ -9,6 +9,7 @@ import {
   WINDOW_MS,
   buildScenarioPackets,
   listScenarios,
+  resolveScenarioId,
 } from "../../src/fixtures/registry";
 import { createSeededRng, fnv1a32 } from "../../src/fixtures/rng";
 import { mintPacketId } from "../../src/packet/id";
@@ -54,7 +55,7 @@ describe("buildScenarioPackets", () => {
       expect(packet.packet_id).toMatch(/^pkt_healthy_/);
       expect(packet.signals.error_rate).toBeLessThan(0.002);
       expect(packet.signals.slo_burn_rate).toBeLessThan(0.5);
-      expect(packet.recent_deploy).toBeNull();
+      expect(packet.recent_deploy).toBeUndefined();
       expect(packet.alert_labels).toEqual([]);
       expect(packet.top_spans.length).toBeLessThanOrEqual(1);
       expect(Date.parse(packet.window.end) - Date.parse(packet.window.start)).toBe(WINDOW_MS);
@@ -83,8 +84,10 @@ describe("buildScenarioPackets", () => {
       expect(signals.p95_latency_ms).toBeGreaterThanOrEqual(signals.p95_latency_baseline_ms * 1.99);
       expect(signals.p95_latency_ms).toBeLessThanOrEqual(signals.p95_latency_baseline_ms * 4.01);
       expect(signals.slo_burn_rate).toBeGreaterThan(4);
-      expect(packet.recent_deploy).not.toBeNull();
-      expect(packet.recent_deploy?.sha).toMatch(/^[0-9a-f]{12}$/);
+      expect(packet.recent_deploy).toBeDefined();
+      expect(packet.recent_deploy?.version.length).toBeGreaterThan(0);
+      expect(packet.recent_deploy?.minutes_ago).toBeGreaterThanOrEqual(0);
+      expect(packet.recent_deploy).not.toHaveProperty("sha");
       expect(Date.parse(packet.recent_deploy?.deployed_at ?? "")).toBeLessThan(
         Date.parse(packet.window.start),
       );
@@ -145,6 +148,7 @@ describe("listScenarios", () => {
       "dependency_timeouts",
       "noise_storm",
       "chaos",
+      "demo_mix",
     ]);
     for (const entry of listed) {
       expect(entry.description.length).toBeGreaterThan(20);
@@ -152,5 +156,22 @@ describe("listScenarios", () => {
     }
     expect(SCENARIOS.healthy?.build).toBe(buildHealthy);
     expect(SCENARIOS.post_deploy_burn?.build).toBe(buildPostDeployBurn);
+  });
+});
+
+describe("resolveScenarioId", () => {
+  it("maps demo UI aliases onto native registry ids and keeps natives", () => {
+    expect(resolveScenarioId("nominal")).toBe("healthy");
+    expect(resolveScenarioId("latency-spike")).toBe("dependency_timeouts");
+    expect(resolveScenarioId("malformed")).toBe("noise_storm");
+    expect(resolveScenarioId("chaos")).toBe("chaos");
+    expect(resolveScenarioId("healthy")).toBe("healthy");
+    expect(resolveScenarioId("post_deploy_burn")).toBe("post_deploy_burn");
+  });
+
+  it("builds packets for demo aliases", () => {
+    const packets = buildScenarioPackets(resolveScenarioId("nominal"), 1, { seed: "alias" });
+    expect(packets).toHaveLength(1);
+    expect(packets[0]?.packet_id).toMatch(/^pkt_healthy_/);
   });
 });

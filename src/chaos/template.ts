@@ -10,13 +10,13 @@
  * source, so a seeded run replays byte for byte and a failure is reportable.
  *
  * Roughly one packet in four carries a populated `recent_deploy`; the rest
- * set it to `null`, giving the Judge a mixed signal on deploy relatedness.
+ * omit the field, giving the Judge a mixed signal on deploy relatedness.
  *
  * The Workers AI chaos path in `./llm.ts` reuses this module as its base and
  * its fallback; nothing here touches an AI binding or a new route.
  */
 
-import { PACKET_ENVS, type Packet, type PacketEnv, type RecentDeploy, type TopSpan } from "../packet/schema";
+import { PACKET_ENVS, PACKET_SCHEMA_VERSION, type Packet, type PacketEnv, type RecentDeploy, type TopSpan } from "../packet/schema";
 import { isoSeconds, type BuildContext } from "../fixtures/registry";
 import { between, hex, intBetween, pick, round, type RandomSource } from "../fixtures/rng";
 
@@ -161,7 +161,11 @@ function sampleDeploy(random: RandomSource, nowMs: number, windowStartMs: number
     1,
     20,
   )}`;
-  return { sha: hex(random, 12), version, deployed_at: isoSeconds(deployedAtMs) };
+  return {
+    version,
+    deployed_at: isoSeconds(deployedAtMs),
+    minutes_ago: Math.max(0, Math.round((nowMs - deployedAtMs) / MINUTE_MS)),
+  };
 }
 
 function pad2(value: number): string {
@@ -186,20 +190,25 @@ export function buildChaosPacket({ random, packetId, window, nowMs }: BuildConte
   const requestRate = round(draw(random, profile.requestRate), 1);
 
   const spanNames = sampleDistinct(random, SPAN_POOL, intBetween(random, MIN_SPANS, MAX_SPANS));
-  const topSpans: TopSpan[] = spanNames.map((name) => ({
-    name,
-    count: intBetween(random, 10, 20_000),
-    p95_ms: round(p95 * between(random, 0.3, 1.1), 1),
-  }));
+  const topSpans: TopSpan[] = spanNames.map((name) => {
+    const count = intBetween(random, 10, 20_000);
+    return {
+      name,
+      count,
+      error_count: intBetween(random, 0, Math.max(1, Math.floor(count * 0.2))),
+      p95_ms: round(p95 * between(random, 0.3, 1.1), 1),
+    };
+  });
 
   const alertLabels = sampleDistinct(random, ALERT_LABEL_POOL, intBetween(random, 0, MAX_LABELS));
 
   const exemplarTraceIds = Array.from({ length: intBetween(random, 0, 2) }, () => hex(random, 32));
 
   const recentDeploy =
-    random() < DEPLOY_PROBABILITY ? sampleDeploy(random, nowMs, Date.parse(window.start)) : null;
+    random() < DEPLOY_PROBABILITY ? sampleDeploy(random, nowMs, Date.parse(window.start)) : undefined;
 
   return {
+    schema_version: PACKET_SCHEMA_VERSION,
     packet_id: packetId,
     service,
     env,
@@ -209,12 +218,12 @@ export function buildChaosPacket({ random, packetId, window, nowMs }: BuildConte
       error_rate_baseline: errorRateBaseline,
       p95_latency_ms: p95,
       p95_latency_baseline_ms: p95Baseline,
+      request_rate_rps: requestRate,
       slo_burn_rate: burnRate,
-      request_rate: requestRate,
     },
     top_spans: topSpans,
     exemplar_trace_ids: exemplarTraceIds,
-    recent_deploy: recentDeploy,
     alert_labels: alertLabels,
+    ...(recentDeploy === undefined ? {} : { recent_deploy: recentDeploy }),
   };
 }

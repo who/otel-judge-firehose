@@ -6,19 +6,23 @@
  * against `Packet`, and `validatePacket()` (a sibling task) parses candidates
  * with this schema before anything is posted to the Judge.
  *
- * Field names are snake_case to match the sibling Judge PRD exactly. Unknown
- * keys are stripped rather than rejected so a Judge-side addition does not
- * break this producer; any field added here later must be optional so an
- * older Judge deployment keeps parsing.
+ * Field names are snake_case and match the sibling Judge packet types exactly
+ * (`otel-judge/src/packet/types.ts`). Unknown keys are stripped rather than
+ * rejected so a Judge-side addition does not break this producer; any field
+ * added here later must be optional so an older Judge deployment keeps
+ * parsing. Do not emit fields the Judge does not define (for example `sha`
+ * on `recent_deploy`): the Judge rejects unexpected top-level and signal keys.
  */
 
 import { z } from "zod";
 
 /**
  * Version of the packet contract. Bump when a field is added, removed, or has
- * its meaning changed so the Judge can detect a mismatch.
+ * its meaning changed so the Judge can detect a mismatch. Must be the number
+ * `1` on every wire payload (`schema_version`), matching Judge
+ * `PACKET_SCHEMA_VERSION`.
  */
-export const PACKET_SCHEMA_VERSION = "1" as const;
+export const PACKET_SCHEMA_VERSION = 1 as const;
 
 /** Deployment environments the Judge distinguishes. Closed set by design. */
 export const PACKET_ENVS = ["prod", "staging", "dev"] as const;
@@ -49,6 +53,13 @@ const isoUtcTimestamp = z.iso.datetime({
 const unitInterval = z.number().min(0).max(1);
 const nonNegativeMillis = z.number().min(0).max(MAX_LATENCY_MS);
 
+/** Optional resource pressure; omit the object when none is measured. */
+export const SaturationSchema = z.object({
+  cpu_pct: z.number().min(0).max(100).optional(),
+  mem_pct: z.number().min(0).max(100).optional(),
+  queue_depth: z.number().min(0).optional(),
+});
+
 /** Aggregate health signals for the observation window. */
 export const SignalsSchema = z.object({
   /** Fraction of requests that failed in the window, 0 to 1. */
@@ -59,24 +70,30 @@ export const SignalsSchema = z.object({
   p95_latency_ms: nonNegativeMillis,
   /** 95th percentile latency in the baseline period, milliseconds. */
   p95_latency_baseline_ms: nonNegativeMillis,
+  /** Requests per second observed in the window. */
+  request_rate_rps: z.number().min(0).max(MAX_REQUEST_RATE),
   /** SLO error budget burn rate; 1 means burning exactly at budget. */
   slo_burn_rate: z.number().min(0).max(MAX_SLO_BURN_RATE),
-  /** Requests per second observed in the window. */
-  request_rate: z.number().min(0).max(MAX_REQUEST_RATE),
+  /** Optional resource pressure; omit rather than send an empty object. */
+  saturation: SaturationSchema.optional(),
 });
 
 /** One notable span aggregated over the window. */
 export const TopSpanSchema = z.object({
   name: nonEmptyString,
   count: z.number().int().min(0),
+  error_count: z.number().int().min(0),
   p95_ms: nonNegativeMillis,
 });
 
-/** Most recent deploy of the service before or during the window. */
+/**
+ * Most recent deploy of the service before or during the window.
+ * Judge shape only: `version`, `deployed_at`, `minutes_ago`. Never send `sha`.
+ */
 export const RecentDeploySchema = z.object({
-  sha: nonEmptyString,
   version: nonEmptyString,
   deployed_at: isoUtcTimestamp,
+  minutes_ago: z.number().min(0),
 });
 
 /** Half-open observation window; `end` must be strictly after `start`. */
@@ -100,6 +117,8 @@ export const WindowSchema = z
 
 /** The normalized packet this producer posts to the Judge firehose. */
 export const PacketSchema = z.object({
+  /** Must equal `PACKET_SCHEMA_VERSION` (number 1) on every POST. */
+  schema_version: z.literal(PACKET_SCHEMA_VERSION),
   /** Unique per POST; see `PACKET_ID_PATTERN`. */
   packet_id: z.string().regex(PACKET_ID_PATTERN, {
     message: "must match pkt_<scenario>_<epochMillis>_<6 base36 chars>",
@@ -114,16 +133,17 @@ export const PacketSchema = z.object({
   exemplar_trace_ids: z.array(
     z.string().regex(TRACE_ID_PATTERN, { message: "must be a 32-character hex trace id" }),
   ),
-  /**
-   * Required but nullable: `null` states "no recent deploy" explicitly, which
-   * is distinct from the generator forgetting the field.
-   */
-  recent_deploy: RecentDeploySchema.nullable(),
   alert_labels: z.array(z.string()),
+  /**
+   * Optional: omit when there is no recent deploy. Do not send `null` — the
+   * Judge treats null as an invalid object. Do not send `sha`.
+   */
+  recent_deploy: RecentDeploySchema.optional(),
   log_snippets: z.array(z.string()).optional(),
 });
 
 export type PacketEnv = (typeof PACKET_ENVS)[number];
+export type Saturation = z.infer<typeof SaturationSchema>;
 export type Signals = z.infer<typeof SignalsSchema>;
 export type TopSpan = z.infer<typeof TopSpanSchema>;
 export type RecentDeploy = z.infer<typeof RecentDeploySchema>;

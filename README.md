@@ -46,6 +46,7 @@ whether the result is usable.
 |---|---|---|---|
 | `JUDGE_FIREHOSE_URL` | Wrangler `vars` entry | yes | Absolute HTTPS URL of the `otel-judge` Worker firehose ingress. Plain `http:` is accepted only for `localhost`, `127.0.0.1`, and `[::1]`. A trailing slash is stripped. |
 | `JUDGE_INGEST_TOKEN` | **Worker secret** | no | When set, every packet POST carries it as an `Authorization: Bearer` header. It is never echoed into a response body or a log line. |
+| `FIREHOSE_SECRET` | **Worker secret** (or `.dev.vars` locally) | no | When set, every packet POST carries `x-firehose-signature`: HMAC-SHA256 of the exact JSON body as lowercase hex. Must match Judge `FIREHOSE_SECRET`. Never echoed. |
 | `DEMO_ORIGIN_ALLOWLIST` | Wrangler `vars` entry | no | Comma-separated browser origins allowed to call the emit API cross-origin. Defaults to the demo's GitHub Pages origin, `who.github.io` over HTTPS. A single `*` allows any origin and is a development-only setting. |
 
 `JUDGE_INGEST_TOKEN` is a secret. It is set with the Wrangler secret command
@@ -53,6 +54,7 @@ and is deliberately absent from `wrangler.jsonc`, so it is never committed:
 
 ```sh
 npx wrangler secret put JUDGE_INGEST_TOKEN
+npx wrangler secret put FIREHOSE_SECRET
 ```
 
 The other two variables are plain configuration and live in the `vars`
@@ -180,7 +182,8 @@ curl https://firehose.example.invalid/scenarios
     { "id": "post_deploy_burn", "description": "Regression minutes after a release: ..." },
     { "id": "dependency_timeouts", "description": "Upstream dependency timing out ..." },
     { "id": "noise_storm", "description": "Alert noise, not an incident: ..." },
-    { "id": "chaos", "description": "Randomized: seeded template draws ..." }
+    { "id": "chaos", "description": "Randomized: seeded template draws ..." },
+    { "id": "demo_mix", "description": "Weighted blend for a demo board: ..." }
   ]
 }
 ```
@@ -190,6 +193,8 @@ stable `id` and a human `description`. Descriptions are abbreviated above;
 the route returns the full text.
 
 ### POST /emit
+Demo UI aliases (`nominal`, `latency-spike`, `malformed`, `chaos`, `mix`) are mapped in Firehose onto registry ids (`healthy`, `dependency_timeouts`, `noise_storm`, `chaos`, `demo_mix`); native ids still work.
+
 
 Generates `count` packets for `scenario`, validates them, and posts each one
 to the Judge firehose as its own HTTP request. The body is parsed by
@@ -306,6 +311,13 @@ The identifiers are a contract with the demo Emit control and are fixed.
   With `llm` set, Workers AI writes the descriptive fields on top of the
   template packet and the template stands in whenever the model output is
   invalid.
+- `demo_mix`: a weighted blend meant to fill a demo board with more than one
+  verdict. Roughly two windows in five are chronic client-side 4xx noise; the
+  rest divide between a quiet window, a failing best-effort path, a degraded
+  core service, and a critical-path burn that names the release behind it.
+  Path criticality rides on the service, the span names, and the
+  `critical_path` / `core_path` / `best_effort` alert labels rather than on a
+  new packet field. Reproducible with a `seed`.
 
 Descriptions are served verbatim by `GET /scenarios`, which is the source of
 truth for the Emit control's picker.

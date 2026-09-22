@@ -8,8 +8,8 @@
  * `buildScenarioPackets()`.
  *
  * Scenario identifiers are a contract with the demo Emit control and are
- * fixed: healthy, post_deploy_burn, dependency_timeouts, noise_storm, and
- * chaos. Adding a scenario means adding an entry to `SCENARIOS`; the
+ * fixed: healthy, post_deploy_burn, dependency_timeouts, noise_storm,
+ * chaos, and demo_mix. Adding a scenario means adding an entry to `SCENARIOS`; the
  * interface does not change.
  */
 
@@ -17,6 +17,7 @@ import { buildChaosPacket } from "../chaos/template";
 import { mintPacketId } from "../packet/id";
 import type { Packet, PacketWindow } from "../packet/schema";
 import { validatePackets } from "../packet/validate";
+import { buildDemoMix } from "./demoMix";
 import { buildDependencyTimeouts } from "./dependencyTimeouts";
 import { buildHealthy } from "./healthy";
 import { buildNoiseStorm } from "./noiseStorm";
@@ -29,6 +30,24 @@ import { createSeededRng, freshSeed, type RandomSource } from "./rng";
  * module because the registry owns every scenario id.
  */
 export const CHAOS_SCENARIO_ID = "chaos";
+
+/**
+ * Demo UI scenario names mapped onto registry ids. Native registry ids pass
+ * through unchanged. Aliasing lives here (not in the demo) so EmitControls can
+ * keep friendly labels without forking fixture ids.
+ */
+export const SCENARIO_ALIASES: Readonly<Record<string, string>> = {
+  nominal: "healthy",
+  "latency-spike": "dependency_timeouts",
+  malformed: "noise_storm",
+  mix: "demo_mix",
+  chaos: CHAOS_SCENARIO_ID,
+};
+
+/** Resolves a demo or native scenario id to a registered fixture id. */
+export function resolveScenarioId(id: string): string {
+  return Object.hasOwn(SCENARIO_ALIASES, id) ? (SCENARIO_ALIASES[id] as string) : id;
+}
 
 /** Length of every fixture observation window. */
 export const WINDOW_MS = 5 * 60 * 1000;
@@ -129,6 +148,12 @@ export const SCENARIOS: Readonly<Record<string, ScenarioDefinition>> = {
       "Randomized: seeded template draws the service, environment, signal profile, span mix, and alert labels afresh per packet; about one in four carries a recent deploy. Reproducible with a seed. With llm set, Workers AI writes the descriptive fields and the template stands in whenever the model output is invalid.",
     build: buildChaosPacket,
   },
+  demo_mix: {
+    id: "demo_mix",
+    description:
+      "Weighted blend for a demo board: roughly two windows in five are chronic client-side 4xx noise, the rest split between a quiet window, a failing best-effort path, a degraded core service, and a critical-path burn. Path criticality is carried by the service, the span names, and the alert labels. Reproducible with a seed.",
+    build: buildDemoMix,
+  },
 };
 
 /** Stable id and description of every registered scenario, in registration order. */
@@ -139,6 +164,35 @@ export function listScenarios(): ScenarioSummary[] {
 /** Renders a millisecond clock value as an ISO 8601 UTC timestamp without fractional seconds. */
 export function isoSeconds(ms: number): string {
   return new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(/\.000Z$/, "Z");
+}
+
+/**
+ * Assembles one `BuildContext` exactly as `buildScenarioPackets()` would, for
+ * a test that drives a single builder branch directly instead of waiting for
+ * the weighted draw to reach it.
+ *
+ * The registry owns the packet identifier and the observation window, so a
+ * test that hand-rolled a context would be free to disagree with the real
+ * build path on both. Going through here keeps that impossible. The clock is
+ * pinned to `SEEDED_CLOCK_EPOCH_MS` and every draw comes from `seed`, so the
+ * same seed yields the same context.
+ */
+export function createBuildContextForTest(
+  scenario: string,
+  seed: string,
+  options: { readonly index?: number; readonly count?: number; readonly now?: number } = {},
+): BuildContext {
+  const random = createSeededRng(seed);
+  const nowMs = options.now ?? SEEDED_CLOCK_EPOCH_MS;
+  return {
+    scenario,
+    index: options.index ?? 0,
+    count: options.count ?? 1,
+    nowMs,
+    random,
+    packetId: mintPacketId(scenario, new Date(nowMs), random),
+    window: { start: isoSeconds(nowMs - WINDOW_MS), end: isoSeconds(nowMs) },
+  };
 }
 
 function resolveScenario(id: string): ScenarioDefinition {

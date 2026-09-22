@@ -1,13 +1,13 @@
 # Packet contract alignment
 
 This document maps every field the firehose producer emits to the Judge
-packet contract described in the `otel-judge` PRD under "Packet contract
-(MVP intent)". It exists so a Judge-side change is caught by a reviewer
-reading one page, not by a runtime rejection. The in-repo Zod schema in
-`src/packet/schema.ts` is the local source of truth; this page is its
-human-readable twin, and `test/docs.test.ts` fails when the two drift.
+packet contract described in `otel-judge/src/packet/types.ts`. It exists so a
+Judge-side change is caught by a reviewer reading one page, not by a runtime
+rejection. The in-repo Zod schema in `src/packet/schema.ts` is the local
+source of truth; this page is its human-readable twin, and `test/docs.test.ts`
+fails when the two drift.
 
-Contract version: `PACKET_SCHEMA_VERSION` is `"1"`.
+Contract version: `PACKET_SCHEMA_VERSION` is `1`.
 
 ## Transport decision
 
@@ -23,10 +23,12 @@ producer. Reasons:
 
 Each packet is its own HTTP POST to the configured ingest URL with
 `content-type: application/json` and the packet as the body. When an ingest
-token is configured it travels as an `Authorization: Bearer` header. One
-packet per request means one unique `packet_id` per request, which is what
-the Judge dedupes on. Transient failures (network errors, 429, 5xx) are
-retried a bounded number of times; any other non-2xx status is final.
+token is configured it travels as an `Authorization: Bearer` header. When
+`FIREHOSE_SECRET` is set the body is also signed with
+`x-firehose-signature`. One packet per request means one unique `packet_id`
+per request, which is what the Judge dedupes on. Transient failures (network
+errors, 429, 5xx) are retried a bounded number of times; any other non-2xx
+status is final.
 
 There is no shared npm package. The three repositories are separate, with no
 monorepo and no publishing pipeline, so cross-repo agreement is carried by
@@ -36,21 +38,22 @@ editing both in the same commit.
 ## Field table
 
 Every top-level field is required unless marked optional. Field names are
-snake_case and match the Judge PRD exactly. Unknown keys are stripped on
-parse rather than rejected, so a Judge-side addition never breaks this
-producer.
+snake_case and match the Judge types exactly. Unknown keys are stripped on
+parse by this producer; the Judge rejects unexpected top-level and signal
+keys, so do not invent fields here.
 
 | Field | Type | Bounds | Judge-side meaning |
 |---|---|---|---|
+| `schema_version` | number | must be `1` (`PACKET_SCHEMA_VERSION`) | Contract version; Judge returns `unsupported_schema_version` when missing or wrong |
 | `packet_id` | string | matches `pkt_<scenario>_<epochMillis>_<6 base36>` (see below) | Dedupe key; unique per POST (PRD FR3) |
 | `service` | string | non-empty after trim | Logical service the signals describe; names the Agent instance the packet routes to |
 | `env` | enum | one of `prod`, `staging`, `dev` | Deployment environment; closed set by design |
 | `window` | object | `start` and `end` are ISO 8601 UTC timestamps with `Z` suffix; `end` strictly after `start` | Observation window the signals were aggregated over |
-| `signals` | object | six numeric members, listed below | Aggregate health signals the Judge evaluates |
-| `top_spans` | array of `{ name, count, p95_ms }` | may be empty; `name` non-empty, `count` integer at least 0, `p95_ms` 0 to 3,600,000 | Most notable spans in the window; empty means nothing to escalate |
+| `signals` | object | six required numeric members (plus optional `saturation`), listed below | Aggregate health signals the Judge evaluates |
+| `top_spans` | array of `{ name, count, error_count, p95_ms }` | may be empty; `name` non-empty, `count` and `error_count` integers at least 0, `p95_ms` 0 to 3,600,000 | Most notable spans in the window; empty means nothing to escalate |
 | `exemplar_trace_ids` | array of string | each a 32-character hex trace id (W3C / OpenTelemetry) | Traces a human can open from the board |
-| `recent_deploy` | object or `null` | required; `{ sha, version, deployed_at }` with non-empty strings and an ISO 8601 UTC `deployed_at`, or `null` for "no recent deploy" | Evidence for the `deploy_related` and `root_cause_family` questions |
 | `alert_labels` | array of string | may be empty | Alert names firing in the window; volume feeds `noise_likely` |
+| `recent_deploy` | object | optional; omit when none — do **not** send `null`; `{ version, deployed_at, minutes_ago }` only (no `sha`) | Evidence for the `deploy_related` and `root_cause_family` questions |
 | `log_snippets` | array of string | optional; omit rather than send an empty array when there is nothing to say | Free-text context for the narrative judge |
 
 ### `signals` members
@@ -61,8 +64,9 @@ producer.
 | `error_rate_baseline` | number | 0 to 1 | Same fraction over the baseline period |
 | `p95_latency_ms` | number | 0 to 3,600,000 | 95th percentile latency in the window, milliseconds |
 | `p95_latency_baseline_ms` | number | 0 to 3,600,000 | 95th percentile latency over the baseline period |
+| `request_rate_rps` | number | 0 to 1,000,000 | Requests per second observed in the window |
 | `slo_burn_rate` | number | 0 to 10,000 | Error-budget burn rate; 1 means burning exactly at budget |
-| `request_rate` | number | 0 to 1,000,000 | Requests per second observed in the window |
+| `saturation` | object | optional; may include `cpu_pct`, `mem_pct`, `queue_depth` | Resource pressure when the producer can measure it |
 
 The upper bounds on latency and rates exist to catch unit mistakes, such as
 seconds passed where milliseconds were meant. They are producer-side guards,
@@ -72,13 +76,12 @@ not Judge limits.
 
 | Field | Type | Bounds |
 |---|---|---|
-| `sha` | string | non-empty; a commit identifier |
 | `version` | string | non-empty; a human-readable release label |
 | `deployed_at` | string | ISO 8601 UTC timestamp with `Z` suffix |
+| `minutes_ago` | number | finite number of at least 0 |
 
-`null` and absent are different. `null` states "no recent deploy" explicitly
-and is valid; a missing `recent_deploy` key fails validation, because it
-means the generator forgot the field.
+Omit `recent_deploy` entirely when there is no recent deploy. Sending `null`
+fails Judge validation. Do not send `sha` or any other undeclared field.
 
 ## Identifier format
 
@@ -113,9 +116,8 @@ schema, so the minting code and the schema must change in the same commit.
 - Renaming a field, removing a field, changing a type, tightening a bound, or
   changing a field's meaning is a breaking change and bumps
   `PACKET_SCHEMA_VERSION`.
-- The version is not carried inside the packet today. It is a constant the
-  producer exports so the Judge can compare against its own expectation when
-  the two repositories are reconciled.
+- Every packet carries `schema_version: 1` on the wire so the Judge can reject
+  a mismatched producer immediately (`unsupported_schema_version`).
 
 ## Mapping to the Judge questions map
 
@@ -127,12 +129,13 @@ of them; the Judge decides how, and nothing here is a hard gate.
 | `severity` | `signals.error_rate` vs `signals.error_rate_baseline`, `signals.p95_latency_ms` vs `signals.p95_latency_baseline_ms`, `signals.slo_burn_rate`, `env` |
 | `needs_human` | `signals.slo_burn_rate`, `alert_labels`, `exemplar_trace_ids`, `log_snippets` |
 | `deploy_related` | `recent_deploy` relative to `window`, `top_spans` |
-| `noise_likely` | `alert_labels` volume against the `signals` deltas, `signals.request_rate` |
-| `root_cause_family` | `recent_deploy`, `top_spans`, `log_snippets`, `signals.request_rate` |
+| `noise_likely` | `alert_labels` volume against the `signals` deltas, `signals.request_rate_rps` |
+| `root_cause_family` | `recent_deploy`, `top_spans`, `log_snippets`, `signals.request_rate_rps` |
 
 ## Configuration placeholders
 
-The ingest URL is supplied through the `JUDGE_FIREHOSE_URL` binding and the
-optional token through `JUDGE_INGEST_TOKEN`. Neither value belongs in this
+The ingest URL is supplied through the `JUDGE_FIREHOSE_URL` binding, the
+optional token through `JUDGE_INGEST_TOKEN`, and the optional HMAC secret
+through `FIREHOSE_SECRET` (header `x-firehose-signature`). Neither value belongs in this
 repository or in this document. Use placeholders such as
 `https://judge.example.invalid/firehose` in examples.
